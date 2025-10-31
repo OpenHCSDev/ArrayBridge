@@ -1,0 +1,86 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "arraybridge"
+version = "0.1.0"
+description = "Unified API for NumPy, CuPy, PyTorch, TensorFlow, JAX, and pyclesperanto with automatic memory type conversion"
+authors = [{name = "Tristan Simas", email = "tristan.simas@mail.mcgill.ca"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = ["numpy", "cupy", "pytorch", "tensorflow", "jax", "gpu", "array", "tensor", "conversion"]
+
+dependencies = ["numpy>=1.20"]
+
+[project.optional-dependencies]
+cupy = ["cupy>=10.0"]
+torch = ["torch>=1.10"]
+tensorflow = ["tensorflow>=2.8"]
+jax = ["jax>=0.3", "jaxlib>=0.3"]
+pyclesperanto = ["pyclesperanto>=0.10"]
+all = [
+    "cupy>=10.0",
+    "torch>=1.10",
+    "tensorflow>=2.8",
+    "jax>=0.3",
+    "jaxlib>=0.3",
+    "pyclesperanto>=0.10",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+]
+docs = [
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.0",
+    "mkdocstrings[python]>=0.24",
+]
+
+[project.urls]
+Homepage = "https://github.com/trissim/arraybridge"
+Documentation = "https://arraybridge.readthedocs.io"
+Repository = "https://github.com/trissim/arraybridge"
+Issues = "https://github.com/trissim/arraybridge/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/arraybridge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--cov=arraybridge --cov-report=term-missing --cov-report=html"
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # Too strict for scientific code
