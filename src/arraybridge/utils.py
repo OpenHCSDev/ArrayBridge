@@ -1,3 +1,14 @@
+"""
+Memory conversion utility functions for arraybridge.
+
+This module provides utility functions for memory conversion operations.
+"""
+
+import importlib
+import logging
+from typing import Any, Optional
+
+
 class _ModulePlaceholder:
     """
     Placeholder for missing optional modules that allows attribute access
@@ -59,18 +70,6 @@ def optional_import(module_name: str) -> Optional[Any]:
         # Return a placeholder that handles attribute access gracefully
         return _ModulePlaceholder(module_name)
 
-
-"""
-Memory conversion utility functions for OpenHCS.
-
-This module provides utility functions for memory conversion operations,
-supporting Clause 251 (Declarative Memory Conversion Interface) and
-Clause 65 (Fail Loudly).
-"""
-
-import importlib
-import logging
-from typing import Any, Optional
 
 from arraybridge.types import MemoryType
 

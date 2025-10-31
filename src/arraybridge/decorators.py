@@ -18,7 +18,7 @@ import logging
 import threading
 from typing import Any, Callable, Optional, TypeVar
 
-from openhcs.constants.constants import VALID_MEMORY_TYPES, MemoryType
+from arraybridge.types import MemoryType, VALID_MEMORY_TYPES
 from arraybridge.utils import optional_import
 from arraybridge.oom_recovery import _execute_with_oom_recovery
 from arraybridge.framework_ops import _FRAMEWORK_OPS

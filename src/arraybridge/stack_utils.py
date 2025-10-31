@@ -14,7 +14,7 @@ from typing import Any, List
 
 import numpy as np
 
-from openhcs.constants.constants import GPU_MEMORY_TYPES, MemoryType
+from arraybridge.types import GPU_MEMORY_TYPES, MemoryType
 from arraybridge.converters import detect_memory_type
 from arraybridge.framework_config import _FRAMEWORK_CONFIG
 from arraybridge.utils import optional_import
