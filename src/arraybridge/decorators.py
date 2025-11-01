@@ -20,12 +20,12 @@ from enum import Enum
 from typing import Any, Callable, Optional, TypeVar
 
 import numpy as np
-from openhcs.constants.constants import MemoryType
 
 from arraybridge.dtype_scaling import SCALING_FUNCTIONS
 from arraybridge.framework_ops import _FRAMEWORK_OPS
 from arraybridge.oom_recovery import _execute_with_oom_recovery
 from arraybridge.slice_processing import process_slices
+from arraybridge.types import MemoryType
 from arraybridge.utils import optional_import
 
 logger = logging.getLogger(__name__)
