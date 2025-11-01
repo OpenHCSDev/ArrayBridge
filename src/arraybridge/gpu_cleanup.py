@@ -11,9 +11,9 @@ REFACTORED: Uses enum-driven metaprogramming to eliminate 67% of code duplicatio
 import gc
 import logging
 from typing import Optional
-from arraybridge.utils import optional_import
-from arraybridge.types import MemoryType
+
 from arraybridge.framework_config import _FRAMEWORK_CONFIG
+from arraybridge.types import MemoryType
 
 logger = logging.getLogger(__name__)
 
@@ -32,37 +32,37 @@ def _create_cleanup_function(mem_type: MemoryType):
     config = _FRAMEWORK_CONFIG[mem_type]
     framework_name = config['import_name']
     display_name = config['display_name']
-    
+
     # CPU memory type - no cleanup needed
     if config['cleanup_ops'] is None:
         def cleanup(device_id: Optional[int] = None) -> None:
             """No-op cleanup for CPU memory type."""
             logger.debug(f"🔥 GPU CLEANUP: No-op for {display_name} (CPU memory type)")
-        
+
         cleanup.__name__ = f"cleanup_{framework_name}_gpu"
         cleanup.__doc__ = f"No-op cleanup for {display_name} (CPU memory type)."
         return cleanup
-    
+
     # GPU memory type - generate cleanup function
     def cleanup(device_id: Optional[int] = None) -> None:
         """
         Clean up {display_name} GPU memory.
-        
+
         Args:
             device_id: Optional GPU device ID. If None, cleans all devices.
         """
         framework = globals().get(framework_name)
-        
+
         if framework is None:
             logger.debug(f"{display_name} not available, skipping cleanup")
             return
-        
+
         try:
             # Check GPU availability
             gpu_check_expr = config['gpu_check'].format(mod=framework_name)
             try:
                 gpu_available = eval(gpu_check_expr, {framework_name: framework})
-            except:
+            except Exception:  # noqa: E722
                 gpu_available = False
 
             if not gpu_available:
@@ -71,7 +71,9 @@ def _create_cleanup_function(mem_type: MemoryType):
             # Execute cleanup operations
             if device_id is not None and config['device_context'] is not None:
                 # Clean specific device with context
-                device_ctx_expr = config['device_context'].format(device_id=device_id, mod=framework_name)
+                device_ctx_expr = config['device_context'].format(
+                    device_id=device_id, mod=framework_name
+                )
                 device_ctx = eval(device_ctx_expr, {framework_name: framework})
 
                 with device_ctx:
@@ -85,14 +87,14 @@ def _create_cleanup_function(mem_type: MemoryType):
                 cleanup_expr = config['cleanup_ops'].format(mod=framework_name)
                 exec(cleanup_expr, {framework_name: framework, 'gc': gc})
                 logger.debug(f"🔥 GPU CLEANUP: Cleared {display_name} for all devices")
-        
+
         except Exception as e:
             logger.warning(f"Failed to cleanup {display_name} GPU memory: {e}")
-    
+
     # Set proper function name and docstring
     cleanup.__name__ = f"cleanup_{framework_name}_gpu"
     cleanup.__doc__ = cleanup.__doc__.format(display_name=display_name)
-    
+
     return cleanup
 
 
@@ -137,11 +139,11 @@ def cleanup_all_gpu_frameworks(device_id: Optional[int] = None) -> None:
 __all__ = [
     'cleanup_all_gpu_frameworks',
     'MEMORY_TYPE_CLEANUP_REGISTRY',
-    'cleanup_numpy_gpu',
-    'cleanup_cupy_gpu',
-    'cleanup_torch_gpu',
-    'cleanup_tensorflow_gpu',
-    'cleanup_jax_gpu',
-    'cleanup_pyclesperanto_gpu',
+    'cleanup_numpy_gpu',  # noqa: F822
+    'cleanup_cupy_gpu',  # noqa: F822
+    'cleanup_torch_gpu',  # noqa: F822
+    'cleanup_tensorflow_gpu',  # noqa: F822
+    'cleanup_jax_gpu',  # noqa: F822
+    'cleanup_pyclesperanto_gpu',  # noqa: F822
 ]
 

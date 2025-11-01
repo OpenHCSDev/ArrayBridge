@@ -8,11 +8,13 @@ Uses enum-driven metaprogramming to eliminate 276 lines of duplication (82% redu
 Pattern follows PR #38: pure data → eval() → single generic function.
 """
 
-import numpy as np
-from arraybridge.types import MemoryType
-from arraybridge.framework_config import _FRAMEWORK_CONFIG
-from arraybridge.utils import optional_import
+from functools import partial
 
+import numpy as np
+
+from arraybridge.framework_config import _FRAMEWORK_CONFIG
+from arraybridge.types import MemoryType
+from arraybridge.utils import optional_import
 
 # Scaling ranges for integer dtypes (shared across all memory types)
 _SCALING_RANGES = {
@@ -81,7 +83,10 @@ def _scale_generic(result, target_dtype, mem_type: MemoryType):
     normalized = (result - result_min) / (result_max - result_min)  # noqa: F841 (used in eval)
 
     # Scale to target range
-    dtype_name = target_dtype.__name__ if hasattr(target_dtype, '__name__') else str(target_dtype).split('.')[-1]
+    if hasattr(target_dtype, '__name__'):
+        dtype_name = target_dtype.__name__
+    else:
+        dtype_name = str(target_dtype).split('.')[-1]
 
     if dtype_name in _SCALING_RANGES:
         range_info = _SCALING_RANGES[dtype_name]
@@ -142,8 +147,6 @@ def _scale_pyclesperanto(result, target_dtype):
 
 
 # Auto-generate all scaling functions using partial application
-from functools import partial
-
 _SCALING_FUNCTIONS_GENERATED = {
     mem_type.value: partial(_scale_generic, mem_type=mem_type)
     for mem_type in MemoryType

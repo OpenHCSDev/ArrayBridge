@@ -1,10 +1,12 @@
 """Memory conversion public API for OpenHCS."""
 
 from typing import Any
+
 import numpy as np
-from arraybridge.types import MemoryType
+
 from arraybridge.conversion_helpers import _CONVERTERS
 from arraybridge.framework_config import _FRAMEWORK_CONFIG
+from arraybridge.types import MemoryType
 
 
 def convert_memory(data: Any, source_type: str, target_type: str, gpu_id: int) -> Any:

@@ -8,6 +8,13 @@ import importlib
 import logging
 from typing import Any, Optional
 
+from arraybridge.types import MemoryType
+
+from .exceptions import MemoryConversionError
+from .framework_config import _FRAMEWORK_CONFIG
+
+logger = logging.getLogger(__name__)
+
 
 class _ModulePlaceholder:
     """
@@ -27,7 +34,10 @@ class _ModulePlaceholder:
 
     def __call__(self, *args, **kwargs):
         # If someone tries to actually call a function, fail loudly
-        raise ImportError(f"Module '{self._module_name}' is not available. Please install the required dependency.")
+        raise ImportError(
+            f"Module '{self._module_name}' is not available. "
+            f"Please install the required dependency."
+        )
 
     def __repr__(self):
         return f"<ModulePlaceholder for '{self._module_name}'>"
@@ -71,12 +81,7 @@ def optional_import(module_name: str) -> Optional[Any]:
         return _ModulePlaceholder(module_name)
 
 
-from arraybridge.types import MemoryType
 
-from .exceptions import MemoryConversionError
-from .framework_config import _FRAMEWORK_CONFIG
-
-logger = logging.getLogger(__name__)
 
 
 def _ensure_module(module_name: str) -> Any:
@@ -104,14 +109,19 @@ def _ensure_module(module_name: str) -> Any:
 
             if tf_version < min_version:
                 raise RuntimeError(
-                    f"TensorFlow version {module.__version__} is not supported for DLPack operations. "
+                    f"TensorFlow version {module.__version__} is not supported "
+                    f"for DLPack operations. "
                     f"Version 2.12.0 or higher is required for stable DLPack support. "
-                    f"Clause 88 (No Inferred Capabilities) violation: Cannot infer DLPack capability."
+                    f"Clause 88 (No Inferred Capabilities) violation: "
+                    f"Cannot infer DLPack capability."
                 )
 
         return module
     except ImportError:
-        raise ImportError(f"Module {module_name} is required for this operation but is not installed")
+        raise ImportError(
+            f"Module {module_name} is required for this operation "
+            f"but is not installed"
+        )
 
 
 def _supports_cuda_array_interface(obj: Any) -> bool:
@@ -159,12 +169,14 @@ def _supports_dlpack(obj: Any) -> bool:
                 if major < 2 or (major == 2 and minor < 12):
                     # Explicitly fail for TF < 2.12 to prevent silent fallbacks
                     raise RuntimeError(
-                        f"TensorFlow version {tf_version} does not support stable DLPack operations. "
+                        f"TensorFlow version {tf_version} does not support "
+                        f"stable DLPack operations. "
                         f"Version 2.12.0 or higher is required. "
                         f"Clause 88 violation: Cannot infer DLPack capability."
                     )
 
-                # Check if tensor is on GPU - CPU tensors might succeed even without proper DLPack support
+                # Check if tensor is on GPU - CPU tensors might succeed
+                # even without proper DLPack support
                 device_str = obj.device.lower()
                 if "gpu" not in device_str:
                     # Explicitly fail for CPU tensors to prevent deceptive behavior

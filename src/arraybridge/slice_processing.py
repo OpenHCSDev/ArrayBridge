@@ -5,27 +5,27 @@ This module provides a single implementation of slice-by-slice processing
 that works for all memory types, eliminating duplication across dtype wrappers.
 """
 
-from arraybridge.stack_utils import unstack_slices, stack_slices
 from arraybridge.converters import detect_memory_type
+from arraybridge.stack_utils import stack_slices, unstack_slices
 
 
 def process_slices(image, func, args, kwargs):
     """
     Process a 3D array slice-by-slice using the provided function.
-    
+
     This function handles:
     - Unstacking 3D arrays into 2D slices
     - Processing each slice independently
     - Handling functions that return tuples (main output + special outputs)
     - Stacking results back into 3D arrays
     - Combining special outputs from all slices
-    
+
     Args:
         image: 3D array to process
         func: Function to apply to each slice
         args: Positional arguments to pass to func
         kwargs: Keyword arguments to pass to func
-        
+
     Returns:
         Processed 3D array, or tuple of (processed_3d_array, special_outputs...)
         if func returns tuples
@@ -65,8 +65,9 @@ def process_slices(image, func, args, kwargs):
             special_output_values = [slice_outputs[i] for slice_outputs in special_outputs_list]
             combined_special_outputs.append(special_output_values)
 
-        # Return tuple: (stacked_main_output, combined_special_output1, combined_special_output2, ...)
+        # Return tuple: (stacked_main_output, combined_special_output1,
+        # combined_special_output2, ...)
         return (result, *combined_special_outputs)
-    
+
     return result
 

@@ -6,7 +6,7 @@ different array/tensor frameworks.
 """
 
 from enum import Enum
-from typing import Set, Any, Callable, TypeVar
+from typing import Any, Callable, TypeVar
 
 T = TypeVar('T')
 ConversionFunc = Callable[[Any], Any]
@@ -14,7 +14,7 @@ ConversionFunc = Callable[[Any], Any]
 
 class MemoryType(Enum):
     """Enum representing different array/tensor framework types."""
-    
+
     NUMPY = "numpy"
     CUPY = "cupy"
     TORCH = "torch"
@@ -34,12 +34,12 @@ def _add_conversion_methods():
     """Add to_X() conversion methods to MemoryType enum."""
     for target_type in MemoryType:
         method_name = f"to_{target_type.value}"
-        
+
         def make_method(target):
             def method(self, data, gpu_id):
                 return getattr(self.converter, f"to_{target.value}")(data, gpu_id)
             return method
-        
+
         setattr(MemoryType, method_name, make_method(target_type))
 
 
@@ -47,15 +47,15 @@ _add_conversion_methods()
 
 
 # Memory type sets
-CPU_MEMORY_TYPES: Set[MemoryType] = {MemoryType.NUMPY}
-GPU_MEMORY_TYPES: Set[MemoryType] = {
+CPU_MEMORY_TYPES: set[MemoryType] = {MemoryType.NUMPY}
+GPU_MEMORY_TYPES: set[MemoryType] = {
     MemoryType.CUPY,
     MemoryType.TORCH,
     MemoryType.TENSORFLOW,
     MemoryType.JAX,
     MemoryType.PYCLESPERANTO
 }
-SUPPORTED_MEMORY_TYPES: Set[MemoryType] = CPU_MEMORY_TYPES | GPU_MEMORY_TYPES
+SUPPORTED_MEMORY_TYPES: set[MemoryType] = CPU_MEMORY_TYPES | GPU_MEMORY_TYPES
 
 # String value sets for validation
 VALID_MEMORY_TYPES = {mt.value for mt in MemoryType}

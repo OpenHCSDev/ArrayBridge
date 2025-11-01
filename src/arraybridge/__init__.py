@@ -7,11 +7,11 @@ and unified utilities for working with multiple array/tensor frameworks.
 
 __version__ = "0.1.0"
 
-from .types import MemoryType, CPU_MEMORY_TYPES, GPU_MEMORY_TYPES, SUPPORTED_MEMORY_TYPES
 from .converters import convert_memory, detect_memory_type
-from .decorators import memory_types, numpy, cupy, torch, tensorflow, jax
-from .stack_utils import stack_slices, unstack_slices
+from .decorators import cupy, jax, memory_types, numpy, tensorflow, torch
 from .exceptions import MemoryConversionError
+from .stack_utils import stack_slices, unstack_slices
+from .types import CPU_MEMORY_TYPES, GPU_MEMORY_TYPES, SUPPORTED_MEMORY_TYPES, MemoryType
 
 __all__ = [
     # Types

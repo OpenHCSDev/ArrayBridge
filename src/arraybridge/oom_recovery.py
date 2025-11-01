@@ -12,8 +12,8 @@ import gc
 import logging
 from typing import Optional
 
-from arraybridge.types import MemoryType
 from arraybridge.framework_ops import _FRAMEWORK_OPS
+from arraybridge.types import MemoryType
 from arraybridge.utils import optional_import
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,8 @@ def _is_oom_error(e: Exception, memory_type: str) -> bool:
 
             # Evaluate the exception type expression
             exc_type_str = exc_type_expr.format(mod='mod')
-            # Extract the attribute path (e.g., 'mod.cuda.OutOfMemoryError' -> ['cuda', 'OutOfMemoryError'])
+            # Extract the attribute path
+            # (e.g., 'mod.cuda.OutOfMemoryError' -> ['cuda', 'OutOfMemoryError'])
             parts = exc_type_str.split('.')[1:]  # Skip 'mod'
             exc_type = mod
             for part in parts:
@@ -124,15 +125,15 @@ def _clear_cache_for_memory_type(memory_type: str, device_id: Optional[int] = No
 def _execute_with_oom_recovery(func_callable, memory_type: str, max_retries: int = 2):
     """
     Execute function with automatic OOM recovery.
-    
+
     Args:
         func_callable: Function to execute
         memory_type: Memory type from MemoryType enum
         max_retries: Maximum number of retry attempts
-        
+
     Returns:
         Function result
-        
+
     Raises:
         Original exception if not OOM or retries exhausted
     """
@@ -142,6 +143,6 @@ def _execute_with_oom_recovery(func_callable, memory_type: str, max_retries: int
         except Exception as e:
             if not _is_oom_error(e, memory_type) or attempt == max_retries:
                 raise
-                
+
             # Clear cache and retry
             _clear_cache_for_memory_type(memory_type)

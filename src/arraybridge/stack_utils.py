@@ -10,13 +10,11 @@ on a single 2D slice. No logic may check, coerce, or infer rank at unstack time.
 """
 
 import logging
-from typing import Any, List
+from typing import Any
 
-import numpy as np
-
-from arraybridge.types import GPU_MEMORY_TYPES, MemoryType
 from arraybridge.converters import detect_memory_type
 from arraybridge.framework_config import _FRAMEWORK_CONFIG
+from arraybridge.types import GPU_MEMORY_TYPES, MemoryType
 from arraybridge.utils import optional_import
 
 logger = logging.getLogger(__name__)
@@ -82,7 +80,9 @@ def _enforce_gpu_device_requirements(memory_type: str, gpu_id: int) -> None:
 # This eliminates the scattered _ALLOCATION_OPS dict
 
 
-def _allocate_stack_array(memory_type: str, stack_shape: tuple, first_slice: Any, gpu_id: int) -> Any:
+def _allocate_stack_array(
+    memory_type: str, stack_shape: tuple, first_slice: Any, gpu_id: int
+) -> Any:
     """
     Allocate a 3D array for stacking slices using framework config.
 
@@ -145,7 +145,7 @@ def _allocate_stack_array(memory_type: str, stack_shape: tuple, first_slice: Any
         return eval(allocate_expr)
 
 
-def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
+def stack_slices(slices: list[Any], memory_type: str, gpu_id: int) -> Any:
     """
     Stack 2D slices into a 3D array with the specified memory type.
 
@@ -177,7 +177,7 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
     # Analyze input types for conversion planning (minimal logging)
     input_types = [detect_memory_type(slice_data) for slice_data in slices]
     unique_input_types = set(input_types)
-    needs_conversion = memory_type not in unique_input_types or len(unique_input_types) > 1
+    memory_type not in unique_input_types or len(unique_input_types) > 1
 
     # Check GPU requirements
     _enforce_gpu_device_requirements(memory_type, gpu_id)
@@ -233,13 +233,18 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
 
     # 🔍 MEMORY CONVERSION LOGGING: Only log when conversions happen or issues occur
     if conversion_count > 0:
-        logger.debug(f"🔄 STACK_SLICES: Converted {conversion_count}/{len(slices)} slices to {memory_type}")
+        logger.debug(
+            f"🔄 STACK_SLICES: Converted {conversion_count}/{len(slices)} "
+            f"slices to {memory_type}"
+        )
     # Silent success for no-conversion cases to reduce log pollution
 
     return result
 
 
-def unstack_slices(array: Any, memory_type: str, gpu_id: int, validate_slices: bool = True) -> List[Any]:
+def unstack_slices(
+    array: Any, memory_type: str, gpu_id: int, validate_slices: bool = True
+) -> list[Any]:
     """
     Split a 3D array into 2D slices along axis 0 and convert to the specified memory type.
 
@@ -263,8 +268,7 @@ def unstack_slices(array: Any, memory_type: str, gpu_id: int, validate_slices: b
     """
     # Detect input type and check if conversion is needed
     input_type = detect_memory_type(array)
-    input_shape = getattr(array, 'shape', 'unknown')
-    needs_conversion = input_type != memory_type
+    getattr(array, 'shape', 'unknown')
 
     # Verify the array is 3D - fail loudly if not
     if not _is_3d(array):
@@ -298,7 +302,10 @@ def unstack_slices(array: Any, memory_type: str, gpu_id: int, validate_slices: b
     if validate_slices:
         for i, slice_data in enumerate(slices):
             if not _is_2d(slice_data):
-                raise ValueError(f"Extracted slice at index {i} is not 2D. This indicates a malformed 3D array.")
+                raise ValueError(
+                    f"Extracted slice at index {i} is not 2D. "
+                    f"This indicates a malformed 3D array."
+                )
 
     # 🔍 MEMORY CONVERSION LOGGING: Only log conversions or issues
     if source_type != memory_type:
