@@ -1,0 +1,141 @@
+================================================================================
+                    QUICK FIX GUIDE - 3 MERGE CONFLICTS
+================================================================================
+
+ROOT CAUSE
+----------
+Main branch renamed package: openhcs → arraybridge
+Your branch still has old import paths
+Git can't auto-merge the different import statements
+
+FILES AFFECTED
+--------------
+1. src/arraybridge/decorators.py    (1 conflict - line 22)
+2. src/arraybridge/stack_utils.py   (1 conflict - line 15)
+3. src/arraybridge/utils.py         (3 conflicts - lines 2, 19, 94)
+
+RESOLUTION SUMMARY
+------------------
+✅ decorators.py   → Keep YOUR version (HEAD)
+✅ stack_utils.py  → Keep YOUR version (HEAD)
+⚠️  utils.py       → MIX: Main's structure + "arraybridge" name
+
+================================================================================
+                         STEP-BY-STEP RESOLUTION
+================================================================================
+
+STEP 1: Start the merge
+------------------------
+git fetch origin
+git merge origin/main
+
+(You'll see conflict messages - that's expected!)
+
+STEP 2: Fix decorators.py
+--------------------------
+Edit src/arraybridge/decorators.py
+
+Find this section (around line 22):
+    <<<<<<< HEAD
+    from arraybridge.types import MemoryType, VALID_MEMORY_TYPES
+    from arraybridge.utils import optional_import
+    from arraybridge.oom_recovery import _execute_with_oom_recovery
+    from arraybridge.framework_ops import _FRAMEWORK_OPS
+    =======
+    import numpy as np
+    from openhcs.constants.constants import MemoryType
+    >>>>>>> origin/main
+
+Replace with:
+    from arraybridge.types import MemoryType, VALID_MEMORY_TYPES
+    from arraybridge.utils import optional_import
+    from arraybridge.oom_recovery import _execute_with_oom_recovery
+    from arraybridge.framework_ops import _FRAMEWORK_OPS
+
+(Just keep the HEAD section, remove all conflict markers and the openhcs line)
+
+STEP 3: Fix stack_utils.py
+---------------------------
+Edit src/arraybridge/stack_utils.py
+
+Find this section (around line 15):
+    <<<<<<< HEAD
+    from arraybridge.types import GPU_MEMORY_TYPES, MemoryType
+    =======
+    from openhcs.constants.constants import GPU_MEMORY_TYPES, MemoryType
+    >>>>>>> origin/main
+
+Replace with:
+    from arraybridge.types import GPU_MEMORY_TYPES, MemoryType
+
+(Keep the HEAD section)
+
+STEP 4: Fix utils.py (MOST IMPORTANT)
+--------------------------------------
+Edit src/arraybridge/utils.py
+
+This file has 3 conflict sections. Here's what to do:
+
+A) Conflict at line 2 (docstring):
+   Replace with:
+   """
+   Memory conversion utility functions for arraybridge.
+
+   This module provides utility functions for memory conversion operations,
+   supporting Clause 251 (Declarative Memory Conversion Interface) and
+   Clause 65 (Fail Loudly).
+   """
+
+B) Conflict at line 19 AND line 94 (imports):
+   IMPORTANT: Keep imports at line 19, DELETE the duplicate at line 94!
+
+   After "from typing import Any, Optional", add these lines:
+
+   from arraybridge.types import MemoryType
+
+   from .exceptions import MemoryConversionError
+   from .framework_config import _FRAMEWORK_CONFIG
+
+   logger = logging.getLogger(__name__)
+
+   Then ensure lines 94-100 do NOT have duplicate imports.
+
+STEP 5: Verify no conflicts remain
+-----------------------------------
+grep -r "<<<<<<< HEAD" src/arraybridge/*.py
+
+If this shows nothing, you're good! If it shows results, you missed a conflict.
+
+STEP 6: Mark files as resolved
+-------------------------------
+git add src/arraybridge/decorators.py
+git add src/arraybridge/stack_utils.py
+git add src/arraybridge/utils.py
+
+STEP 7: Complete the merge
+---------------------------
+git commit -m "Merge main and resolve package rename conflicts"
+
+STEP 8: Verify everything works
+--------------------------------
+# Test import
+python -c "import arraybridge; print(arraybridge.__version__)"
+
+# Build docs
+cd docs && make html
+
+# If both work:
+git push
+
+================================================================================
+                              NEED MORE HELP?
+================================================================================
+
+See these detailed guides I created:
+1. MERGE_CONFLICT_RESOLUTION.md   - Full explanation with analysis
+2. RESOLVED_FILES.md              - Exact code to copy-paste
+3. CONFLICT_VISUALIZATION.md      - Visual diagrams and decision trees
+
+Or ask me for clarification on any step!
+
+================================================================================
