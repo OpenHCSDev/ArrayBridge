@@ -11,11 +11,39 @@ when possible.
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :caption: Getting Started
 
+   installation
    quickstart
+
+.. toctree::
+   :maxdepth: 2
+   :caption: User Documentation
+
+   user_guide
+   converters
+   decorators
+   gpu_features
+   stack_utils
+   advanced_topics
+
+.. toctree::
+   :maxdepth: 2
+   :caption: API Documentation
+
+   api_reference
    api/index
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Examples
+
    examples/index
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Development
+
    contributing
    ci-cd
 

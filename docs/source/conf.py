@@ -80,6 +80,7 @@ intersphinx_mapping = {
 # -- Mock imports for optional dependencies ----------------------------------
 
 # Mock imports for frameworks that might not be installed
+# This ensures documentation builds without requiring all optional dependencies
 autodoc_mock_imports = [
     'cupy',
     'torch',
@@ -88,4 +89,45 @@ autodoc_mock_imports = [
     'jaxlib',
     'pyclesperanto_prototype',
     'pyclesperanto',
+    'cupyx',  # CuPy extensions
 ]
+
+# -- Additional configuration -----------------------------------------------
+
+# The master toctree document
+master_doc = 'index'
+
+# Custom sidebar templates
+html_sidebars = {
+    '**': [
+        'globaltoc.html',
+        'relations.html',
+        'sourcelink.html',
+        'searchbox.html',
+    ]
+}
+
+# Theme options for sphinx_rtd_theme
+html_theme_options = {
+    'navigation_depth': 4,
+    'collapse_navigation': False,
+    'sticky_navigation': True,
+    'includehidden': True,
+    'titles_only': False,
+    'display_version': True,
+    'prev_next_buttons_location': 'both',
+    'style_external_links': False,
+}
+
+# Output file base name for HTML help builder
+htmlhelp_basename = 'arraybridgedoc'
+
+# If true, links to the reST sources are added to the pages
+html_show_sourcelink = True
+
+# If true, "Created using Sphinx" is shown in the HTML footer
+html_show_sphinx = True
+
+# If true, the current module name will be prepended to all description
+# unit titles (such as .. function::)
+add_module_names = False
