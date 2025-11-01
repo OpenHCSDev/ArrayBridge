@@ -49,9 +49,9 @@ dev = [
     "mypy>=1.0",
 ]
 docs = [
-    "mkdocs>=1.5",
-    "mkdocs-material>=9.0",
-    "mkdocstrings[python]>=0.24",
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=2.0",
+    "sphinx-autodoc-typehints>=1.25",
 ]
 
 [project.urls]
@@ -69,6 +69,15 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "--cov=arraybridge --cov-report=term-missing --cov-report=html"
+markers = [
+    "gpu: tests that require actual GPU hardware",
+    "cupy: tests that require CuPy (GPU-only framework)",
+    "torch: tests that require PyTorch",
+    "tensorflow: tests that require TensorFlow",
+    "jax: tests that require JAX",
+    "pyclesperanto: tests that require pyclesperanto",
+    "slow: tests that take a long time to run",
+]
 
 [tool.black]
 line-length = 100

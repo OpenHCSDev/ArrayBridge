@@ -1,5 +1,5 @@
 """
-Memory conversion utility functions for OpenHCS.
+Memory conversion utility functions for arraybridge.
 
 This module provides utility functions for memory conversion operations,
 supporting Clause 251 (Declarative Memory Conversion Interface) and
@@ -16,7 +16,6 @@ from .exceptions import MemoryConversionError
 from .framework_config import _FRAMEWORK_CONFIG
 
 logger = logging.getLogger(__name__)
-
 
 class _ModulePlaceholder:
     """
