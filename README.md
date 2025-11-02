@@ -3,8 +3,10 @@
 **Unified API for NumPy, CuPy, PyTorch, TensorFlow, JAX, and pyclesperanto**
 
 [![PyPI version](https://badge.fury.io/py/arraybridge.svg)](https://badge.fury.io/py/arraybridge)
+[![Documentation Status](https://readthedocs.org/projects/arraybridge/badge/?version=latest)](https://arraybridge.readthedocs.io/en/latest/?badge=latest)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Coverage](https://raw.githubusercontent.com/trissim/arraybridge/main/.github/badges/coverage.svg)](https://trissim.github.io/arraybridge/coverage/)
 
 ## Features
 
