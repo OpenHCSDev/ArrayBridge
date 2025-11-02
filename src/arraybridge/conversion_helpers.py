@@ -75,50 +75,12 @@ def _add_converter_methods():
         setattr(MemoryTypeConverter, method_name, make_method(target_type))
 
 
-# NOTE: Conversion operations now defined in framework_config.py under 'conversion_ops'
-# This eliminates the scattered _OPS dict
-_OPS = {mem_type: config['conversion_ops'] for mem_type, config in _FRAMEWORK_CONFIG.items()}
+# Import registry-based converters
+from arraybridge.converters_registry import get_converter
 
-# Auto-generate lambdas from strings
-def _make_not_implemented(mem_type_value, method_name):
-    """Create a lambda that raises NotImplementedError with the correct signature."""
-    def not_impl(self, data, gpu_id):
-        raise NotImplementedError(f"DLPack not supported for {mem_type_value}")
-    # Add proper names for better debugging
-    not_impl.__name__ = method_name
-    not_impl.__qualname__ = f'{mem_type_value.capitalize()}Converter.{method_name}'
-    return not_impl
-
-def _make_lambda_with_name(expr_str, mem_type, method_name):
-    """Create a lambda from expression string and add proper __name__ for debugging."""
-    # Pre-compute the module string to avoid nested f-strings
-    # with backslashes (Python 3.11 limitation)
-    module_str = f'_ensure_module("{mem_type.value}")'
-    lambda_expr = f'lambda self, data, gpu_id: {expr_str.format(mod=module_str)}'
-    lambda_func = eval(lambda_expr)
-    lambda_func.__name__ = method_name
-    lambda_func.__qualname__ = f'{mem_type.value.capitalize()}Converter.{method_name}'
-    return lambda_func
-
-_TYPE_OPERATIONS = {
-    mem_type: {
-        method_name: (
-            _make_lambda_with_name(expr, mem_type, method_name)
-            if expr is not None
-            else _make_not_implemented(mem_type.value, method_name)
-        )
-        for method_name, expr in ops.items()  # Iterate over dict items - self-documenting!
-    }
-    for mem_type, ops in _OPS.items()
-}
-
-# Auto-generate all 6 converter classes
+# Populate _CONVERTERS from the registry for backward compatibility
 _CONVERTERS = {
-    mem_type: type(
-        f"{mem_type.value.capitalize()}Converter",
-        (MemoryTypeConverter,),
-        _TYPE_OPERATIONS[mem_type]
-    )()
+    mem_type: get_converter(mem_type.value)
     for mem_type in MemoryType
 }
 

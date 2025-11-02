@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 
-from arraybridge.conversion_helpers import _CONVERTERS
+from arraybridge.converters_registry import get_converter
 from arraybridge.framework_config import _FRAMEWORK_CONFIG
 from arraybridge.types import MemoryType
 
@@ -26,8 +26,10 @@ def convert_memory(data: Any, source_type: str, target_type: str, gpu_id: int) -
         ValueError: If source_type or target_type is invalid
         MemoryConversionError: If conversion fails
     """
-    source_enum = MemoryType(source_type)
-    converter = _CONVERTERS[source_enum]
+    # Validate source_type is valid
+    _ = MemoryType(source_type)  # Will raise ValueError if invalid
+    
+    converter = get_converter(source_type)
     method = getattr(converter, f"to_{target_type}")
     return method(data, gpu_id)
 
