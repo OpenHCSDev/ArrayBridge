@@ -136,7 +136,8 @@ def _allocate_stack_array(
     jnp = optional_import("jax.numpy") if mem_type == MemoryType.JAX else None  # noqa: F841
     # dtype is used in allocate_expr eval below (for numpy framework)
     dtype = (  # noqa: F841
-        sample_converted.dtype if sample_converted is not None
+        sample_converted.dtype
+        if sample_converted is not None
         else (first_slice.dtype if hasattr(first_slice, "dtype") else None)
     )
 
