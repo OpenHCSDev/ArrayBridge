@@ -30,20 +30,20 @@ from arraybridge.utils import optional_import
 
 logger = logging.getLogger(__name__)
 
-F = TypeVar('F', bound=Callable[..., Any])
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 class DtypeConversion(Enum):
     """Data type conversion modes for all memory type functions."""
 
-    PRESERVE_INPUT = "preserve"     # Keep input dtype (default)
-    NATIVE_OUTPUT = "native"        # Use framework's native output
-    UINT8 = "uint8"                # Force uint8 (0-255 range)
-    UINT16 = "uint16"              # Force uint16 (microscopy standard)
-    INT16 = "int16"                # Force int16 (signed microscopy data)
-    INT32 = "int32"                # Force int32 (large integer values)
-    FLOAT32 = "float32"            # Force float32 (GPU performance)
-    FLOAT64 = "float64"            # Force float64 (maximum precision)
+    PRESERVE_INPUT = "preserve"  # Keep input dtype (default)
+    NATIVE_OUTPUT = "native"  # Use framework's native output
+    UINT8 = "uint8"  # Force uint8 (0-255 range)
+    UINT16 = "uint16"  # Force uint16 (microscopy standard)
+    INT16 = "int16"  # Force int16 (signed microscopy data)
+    INT32 = "int32"  # Force int32 (large integer values)
+    FLOAT32 = "float32"  # Force float32 (GPU performance)
+    FLOAT64 = "float64"  # Force float64 (maximum precision)
 
     @property
     def numpy_dtype(self):
@@ -65,6 +65,7 @@ _gpu_frameworks_cache = {}
 
 def _create_lazy_getter(framework_name: str):
     """Factory function that creates a lazy import getter for a framework."""
+
     def getter():
         if framework_name not in _gpu_frameworks_cache:
             _gpu_frameworks_cache[framework_name] = optional_import(framework_name)
@@ -74,19 +75,21 @@ def _create_lazy_getter(framework_name: str):
                     f"{threading.current_thread().name}"
                 )
         return _gpu_frameworks_cache[framework_name]
+
     return getter
 
 
 # Auto-generate lazy getters for all GPU frameworks
 for mem_type in MemoryType:
     ops = _FRAMEWORK_OPS[mem_type]
-    if ops['lazy_getter'] is not None:
-        getter_func = _create_lazy_getter(ops['import_name'])
+    if ops["lazy_getter"] is not None:
+        getter_func = _create_lazy_getter(ops["import_name"])
         globals()[f"_get_{ops['import_name']}"] = getter_func
 
 
 # Thread-local storage for GPU streams and contexts
 _thread_gpu_contexts = threading.local()
+
 
 class ThreadGPUContext:
     """Thread-local GPU context manager for CUDA streams."""
@@ -100,8 +103,8 @@ class ThreadGPUContext:
     def get_cupy_stream(self):
         """Get or create thread-local CuPy stream."""
         if self.cupy_stream is None:
-            cupy = globals().get('_get_cupy', lambda: None)()  # noqa: F821
-            if cupy is not None and hasattr(cupy, 'cuda'):
+            cupy = globals().get("_get_cupy", lambda: None)()  # noqa: F821
+            if cupy is not None and hasattr(cupy, "cuda"):
                 self.cupy_stream = cupy.cuda.Stream()
                 logger.debug(f"🔧 Created CuPy stream for thread {threading.current_thread().name}")
         return self.cupy_stream
@@ -109,33 +112,31 @@ class ThreadGPUContext:
     def get_torch_stream(self):
         """Get or create thread-local PyTorch stream."""
         if self.torch_stream is None:
-            torch = globals().get('_get_torch', lambda: None)()  # noqa: F821
-            if torch is not None and hasattr(torch, 'cuda') and torch.cuda.is_available():
+            torch = globals().get("_get_torch", lambda: None)()  # noqa: F821
+            if torch is not None and hasattr(torch, "cuda") and torch.cuda.is_available():
                 self.torch_stream = torch.cuda.Stream()
                 logger.debug(
-                    f"🔧 Created PyTorch stream for thread "
-                    f"{threading.current_thread().name}"
+                    f"🔧 Created PyTorch stream for thread " f"{threading.current_thread().name}"
                 )
         return self.torch_stream
 
 
 def _get_thread_gpu_context():
     """Get or create thread-local GPU context."""
-    if not hasattr(_thread_gpu_contexts, 'context'):
+    if not hasattr(_thread_gpu_contexts, "context"):
         _thread_gpu_contexts.context = ThreadGPUContext()
     return _thread_gpu_contexts.context
 
 
 def memory_types(
-    input_type: str,
-    output_type: str,
-    contract: Optional[Callable[[Any], bool]] = None
+    input_type: str, output_type: str, contract: Optional[Callable[[Any], bool]] = None
 ) -> Callable[[F], F]:
     """
     Base decorator for declaring memory types of a function.
 
     This is the foundation decorator that all memory-type-specific decorators build upon.
     """
+
     def decorator(func: F) -> F:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -176,14 +177,14 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
             original_dtype = image.dtype
 
             # Handle slice_by_slice processing for 3D arrays
-            if slice_by_slice and hasattr(image, 'ndim') and image.ndim == 3:
+            if slice_by_slice and hasattr(image, "ndim") and image.ndim == 3:
                 result = process_slices(image, func, args, kwargs)
             else:
                 # Call the original function normally
                 result = func(image, *args, **kwargs)
 
             # Apply dtype conversion based on enum value
-            if hasattr(result, 'dtype') and dtype_conversion is not None:
+            if hasattr(result, "dtype") and dtype_conversion is not None:
                 if dtype_conversion == DtypeConversion.PRESERVE_INPUT:
                     # Preserve input dtype
                     if result.dtype != original_dtype:
@@ -200,8 +201,7 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
             return result
         except Exception as e:
             logger.error(
-                f"Error in {mem_type.value} dtype/slice preserving wrapper "
-                f"for {func_name}: {e}"
+                f"Error in {mem_type.value} dtype/slice preserving wrapper " f"for {func_name}: {e}"
             )
             # Return original result on error
             return func(image, *args, **kwargs)
@@ -215,22 +215,19 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
         param_names = [p.name for p in new_params]
 
         # Add dtype_conversion parameter first (before slice_by_slice)
-        if 'dtype_conversion' not in param_names:
+        if "dtype_conversion" not in param_names:
             dtype_param = inspect.Parameter(
-                'dtype_conversion',
+                "dtype_conversion",
                 inspect.Parameter.KEYWORD_ONLY,
                 default=DtypeConversion.PRESERVE_INPUT,
-                annotation=Optional[DtypeConversion]
+                annotation=Optional[DtypeConversion],
             )
             new_params.append(dtype_param)
 
         # Add slice_by_slice parameter
-        if 'slice_by_slice' not in param_names:
+        if "slice_by_slice" not in param_names:
             slice_param = inspect.Parameter(
-                'slice_by_slice',
-                inspect.Parameter.KEYWORD_ONLY,
-                default=False,
-                annotation=bool
+                "slice_by_slice", inspect.Parameter.KEYWORD_ONLY, default=False, annotation=bool
             )
             new_params.append(slice_param)
 
@@ -241,23 +238,18 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
         # Update docstring
         if dtype_wrapper.__doc__:
             dtype_wrapper.__doc__ += (
-                f"\n\n    Additional Parameters "
-                f"(added by {mem_type.value} decorator):\n"
+                f"\n\n    Additional Parameters " f"(added by {mem_type.value} decorator):\n"
             )
             dtype_wrapper.__doc__ += (
                 "        dtype_conversion (DtypeConversion, optional): "
                 "How to handle output dtype.\n"
             )
+            dtype_wrapper.__doc__ += "            Defaults to PRESERVE_INPUT (match input dtype).\n"
             dtype_wrapper.__doc__ += (
-                "            Defaults to PRESERVE_INPUT (match input dtype).\n"
+                "        slice_by_slice (bool, optional): " "Process 3D arrays slice-by-slice.\n"
             )
             dtype_wrapper.__doc__ += (
-                "        slice_by_slice (bool, optional): "
-                "Process 3D arrays slice-by-slice.\n"
-            )
-            dtype_wrapper.__doc__ += (
-                "            Defaults to False. "
-                "Prevents cross-slice contamination.\n"
+                "            Defaults to False. " "Prevents cross-slice contamination.\n"
             )
 
     except Exception as e:
@@ -273,8 +265,8 @@ def _create_gpu_wrapper(func, mem_type: MemoryType, oom_recovery: bool):
     This function creates the GPU-specific wrapper with stream management and OOM recovery.
     """
     ops = _FRAMEWORK_OPS[mem_type]
-    framework_name = ops['import_name']
-    lazy_getter = globals().get(ops['lazy_getter'])
+    framework_name = ops["import_name"]
+    lazy_getter = globals().get(ops["lazy_getter"])
 
     @functools.wraps(func)
     def gpu_wrapper(*args, **kwargs):
@@ -282,7 +274,7 @@ def _create_gpu_wrapper(func, mem_type: MemoryType, oom_recovery: bool):
 
         # Check if GPU is available for this framework
         if framework is not None:
-            gpu_check_expr = ops['gpu_check'].format(mod=framework_name)
+            gpu_check_expr = ops["gpu_check"].format(mod=framework_name)
             try:
                 gpu_available = eval(gpu_check_expr, {framework_name: framework})
             except Exception:
@@ -308,7 +300,7 @@ def _create_gpu_wrapper(func, mem_type: MemoryType, oom_recovery: bool):
                         return func(*args, **kwargs)
 
                 # Execute with OOM recovery if enabled
-                if oom_recovery and ops['has_oom_recovery']:
+                if oom_recovery and ops["has_oom_recovery"]:
                     return _execute_with_oom_recovery(execute_with_stream, mem_type.value)
                 else:
                     return execute_with_stream()
@@ -331,8 +323,14 @@ def _create_memory_decorator(mem_type: MemoryType):
     """
     ops = _FRAMEWORK_OPS[mem_type]
 
-    def decorator(func=None, *, input_type=mem_type.value, output_type=mem_type.value,
-                  oom_recovery=True, contract=None):
+    def decorator(
+        func=None,
+        *,
+        input_type=mem_type.value,
+        output_type=mem_type.value,
+        oom_recovery=True,
+        contract=None,
+    ):
         """
         Decorator for {mem_type} memory type functions.
 
@@ -346,12 +344,11 @@ def _create_memory_decorator(mem_type: MemoryType):
         Returns:
             Decorated function with memory type metadata and dtype preservation
         """
+
         def inner_decorator(func):
             # Apply base memory_types decorator
             memory_decorator = memory_types(
-                input_type=input_type,
-                output_type=output_type,
-                contract=contract
+                input_type=input_type, output_type=output_type, contract=contract
             )
             func = memory_decorator(func)
 
@@ -359,7 +356,7 @@ def _create_memory_decorator(mem_type: MemoryType):
             func = _create_dtype_wrapper(func, mem_type, func.__name__)
 
             # Apply GPU wrapper if this is a GPU memory type
-            if ops['gpu_check'] is not None:
+            if ops["gpu_check"] is not None:
                 func = _create_gpu_wrapper(func, mem_type, oom_recovery)
 
             return func
@@ -371,7 +368,7 @@ def _create_memory_decorator(mem_type: MemoryType):
 
     # Set proper function name and docstring
     decorator.__name__ = mem_type.value
-    decorator.__doc__ = decorator.__doc__.format(mem_type=ops['display_name'])
+    decorator.__doc__ = decorator.__doc__.format(mem_type=ops["display_name"])
 
     return decorator
 
@@ -384,13 +381,12 @@ for mem_type in MemoryType:
 
 # Export all decorators
 __all__ = [
-    'memory_types',
-    'DtypeConversion',
-    'numpy',  # noqa: F822
-    'cupy',  # noqa: F822
-    'torch',  # noqa: F822
-    'tensorflow',  # noqa: F822
-    'jax',  # noqa: F822
-    'pyclesperanto',  # noqa: F822
+    "memory_types",
+    "DtypeConversion",
+    "numpy",  # noqa: F822
+    "cupy",  # noqa: F822
+    "torch",  # noqa: F822
+    "tensorflow",  # noqa: F822
+    "jax",  # noqa: F822
+    "pyclesperanto",  # noqa: F822
 ]
-

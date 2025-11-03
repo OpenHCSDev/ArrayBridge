@@ -70,4 +70,3 @@ def process_slices(image, func, args, kwargs):
         return (result, *combined_special_outputs)
 
     return result
-

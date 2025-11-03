@@ -34,7 +34,7 @@ def _is_2d(data: Any) -> bool:
         True if data is 2D, False otherwise
     """
     # Check if data has a shape attribute
-    if not hasattr(data, 'shape'):
+    if not hasattr(data, "shape"):
         return False
 
     # Check if shape has length 2
@@ -52,7 +52,7 @@ def _is_3d(data: Any) -> bool:
         True if data is 3D, False otherwise
     """
     # Check if data has a shape attribute
-    if not hasattr(data, 'shape'):
+    if not hasattr(data, "shape"):
         return False
 
     # Check if shape has length 3
@@ -98,7 +98,7 @@ def _allocate_stack_array(
     # Convert string to enum
     mem_type = MemoryType(memory_type)
     config = _FRAMEWORK_CONFIG[mem_type]
-    allocate_expr = config['allocate_stack']
+    allocate_expr = config["allocate_stack"]
 
     # Check if allocation is None (pyclesperanto uses custom stacking)
     if allocate_expr is None:
@@ -110,33 +110,38 @@ def _allocate_stack_array(
         raise ValueError(f"{mem_type.value} is required for memory type {memory_type}")
 
     # Handle dtype conversion if needed
-    needs_conversion = config['needs_dtype_conversion']
+    needs_conversion = config["needs_dtype_conversion"]
     if callable(needs_conversion):
         # It's a callable that determines if conversion is needed
         needs_conversion = needs_conversion(first_slice, detect_memory_type)
 
     if needs_conversion:
         from arraybridge.converters import convert_memory
+
         first_slice_source_type = detect_memory_type(first_slice)
         sample_converted = convert_memory(  # noqa: F841 (used in eval)
             data=first_slice,
             source_type=first_slice_source_type,
             target_type=memory_type,
-            gpu_id=gpu_id
+            gpu_id=gpu_id,
         )
         dtype = sample_converted.dtype  # noqa: F841 (used in eval)
     else:
-        dtype = first_slice.dtype if hasattr(first_slice, 'dtype') else None  # noqa: F841 (used in eval)
+        dtype = (
+            first_slice.dtype if hasattr(first_slice, "dtype") else None
+        )  # noqa: F841 (used in eval)
 
     # Set up local variables for eval
     np = optional_import("numpy")  # noqa: F841 (used in eval)
     cupy = mod if mem_type == MemoryType.CUPY else None  # noqa: F841 (used in eval)
     torch = mod if mem_type == MemoryType.TORCH else None  # noqa: F841 (used in eval)
     tf = mod if mem_type == MemoryType.TENSORFLOW else None  # noqa: F841 (used in eval)
-    jnp = optional_import("jax.numpy") if mem_type == MemoryType.JAX else None  # noqa: F841 (used in eval)
+    jnp = (
+        optional_import("jax.numpy") if mem_type == MemoryType.JAX else None
+    )  # noqa: F841 (used in eval)
 
     # Execute allocation with context if needed
-    allocate_context = config.get('allocate_context')
+    allocate_context = config.get("allocate_context")
     if allocate_context:
         context = eval(allocate_context)
         with context:
@@ -195,7 +200,7 @@ def stack_slices(slices: list[Any], memory_type: str, gpu_id: int) -> Any:
     # Check for custom stack handler (pyclesperanto)
     mem_type = MemoryType(memory_type)
     config = _FRAMEWORK_CONFIG[mem_type]
-    stack_handler = config.get('stack_handler')
+    stack_handler = config.get("stack_handler")
 
     if stack_handler:
         # Use custom stack handler
@@ -215,15 +220,13 @@ def stack_slices(slices: list[Any], memory_type: str, gpu_id: int) -> Any:
                 converted_data = slice_data
             else:
                 from arraybridge.converters import convert_memory
+
                 converted_data = convert_memory(
-                    data=slice_data,
-                    source_type=source_type,
-                    target_type=memory_type,
-                    gpu_id=gpu_id
+                    data=slice_data, source_type=source_type, target_type=memory_type, gpu_id=gpu_id
                 )
 
             # Assign converted slice using framework-specific handler if available
-            assign_handler = config.get('assign_slice')
+            assign_handler = config.get("assign_slice")
             if assign_handler:
                 # Custom assignment (JAX immutability)
                 result = assign_handler(result, i, converted_data)
@@ -268,7 +271,7 @@ def unstack_slices(
     """
     # Detect input type and check if conversion is needed
     input_type = detect_memory_type(array)
-    getattr(array, 'shape', 'unknown')
+    getattr(array, "shape", "unknown")
 
     # Verify the array is 3D - fail loudly if not
     if not _is_3d(array):
@@ -287,12 +290,10 @@ def unstack_slices(
     else:
         # Convert and log the conversion
         from arraybridge.converters import convert_memory
+
         logger.debug(f"🔄 UNSTACK_SLICES: Converting array - {source_type} → {memory_type}")
         array = convert_memory(
-            data=array,
-            source_type=source_type,
-            target_type=memory_type,
-            gpu_id=gpu_id
+            data=array, source_type=source_type, target_type=memory_type, gpu_id=gpu_id
         )
 
     # Extract slices along axis 0 (already in the target memory type)

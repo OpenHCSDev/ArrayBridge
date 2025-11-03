@@ -21,8 +21,13 @@ class TestFrameworkConfig:
     def test_config_has_required_keys(self):
         """Test that all configs have required keys."""
         required_keys = [
-            'import_name', 'display_name', 'is_gpu', 'scaling_ops',
-            'conversion_ops', 'supports_dlpack', 'lazy_getter'
+            "import_name",
+            "display_name",
+            "is_gpu",
+            "scaling_ops",
+            "conversion_ops",
+            "supports_dlpack",
+            "lazy_getter",
         ]
 
         for mem_type in MemoryType:
@@ -34,66 +39,66 @@ class TestFrameworkConfig:
         """Test numpy-specific configuration."""
         config = _FRAMEWORK_CONFIG[MemoryType.NUMPY]
 
-        assert config['import_name'] == 'numpy'
-        assert config['display_name'] == 'NumPy'
-        assert config['is_gpu'] is False
-        assert config['has_oom_recovery'] is False
-        assert config['oom_string_patterns'] == ['cannot allocate memory', 'memory exhausted']
+        assert config["import_name"] == "numpy"
+        assert config["display_name"] == "NumPy"
+        assert config["is_gpu"] is False
+        assert config["has_oom_recovery"] is False
+        assert config["oom_string_patterns"] == ["cannot allocate memory", "memory exhausted"]
 
     def test_torch_config(self):
         """Test torch-specific configuration."""
         config = _FRAMEWORK_CONFIG[MemoryType.TORCH]
 
-        assert config['import_name'] == 'torch'
-        assert config['display_name'] == 'PyTorch'
-        assert config['is_gpu'] is True
-        assert config['has_oom_recovery'] is True
-        assert config['oom_exception_types'] == ['{mod}.cuda.OutOfMemoryError']
-        assert 'out of memory' in config['oom_string_patterns']
+        assert config["import_name"] == "torch"
+        assert config["display_name"] == "PyTorch"
+        assert config["is_gpu"] is True
+        assert config["has_oom_recovery"] is True
+        assert config["oom_exception_types"] == ["{mod}.cuda.OutOfMemoryError"]
+        assert "out of memory" in config["oom_string_patterns"]
 
     def test_cupy_config(self):
         """Test cupy-specific configuration."""
         config = _FRAMEWORK_CONFIG[MemoryType.CUPY]
 
-        assert config['import_name'] == 'cupy'
-        assert config['display_name'] == 'CuPy'
-        assert config['is_gpu'] is True
-        assert config['has_oom_recovery'] is True
+        assert config["import_name"] == "cupy"
+        assert config["display_name"] == "CuPy"
+        assert config["is_gpu"] is True
+        assert config["has_oom_recovery"] is True
 
     def test_tensorflow_config(self):
         """Test tensorflow-specific configuration."""
         config = _FRAMEWORK_CONFIG[MemoryType.TENSORFLOW]
 
-        assert config['import_name'] == 'tensorflow'
-        assert config['display_name'] == 'TensorFlow'
-        assert config['is_gpu'] is True
-        assert config['has_oom_recovery'] is True
+        assert config["import_name"] == "tensorflow"
+        assert config["display_name"] == "TensorFlow"
+        assert config["is_gpu"] is True
+        assert config["has_oom_recovery"] is True
 
     def test_jax_config(self):
         """Test jax-specific configuration."""
         config = _FRAMEWORK_CONFIG[MemoryType.JAX]
 
-        assert config['import_name'] == 'jax'
-        assert config['display_name'] == 'JAX'
-        assert config['is_gpu'] is True
-        assert config['has_oom_recovery'] is True
+        assert config["import_name"] == "jax"
+        assert config["display_name"] == "JAX"
+        assert config["is_gpu"] is True
+        assert config["has_oom_recovery"] is True
 
     def test_pyclesperanto_config(self):
         """Test pyclesperanto-specific configuration."""
         config = _FRAMEWORK_CONFIG[MemoryType.PYCLESPERANTO]
 
-        assert config['import_name'] == 'pyclesperanto'
-        assert config['display_name'] == 'pyclesperanto'
-        assert config['is_gpu'] is True
-        assert config['has_oom_recovery'] is True
+        assert config["import_name"] == "pyclesperanto"
+        assert config["display_name"] == "pyclesperanto"
+        assert config["is_gpu"] is True
+        assert config["has_oom_recovery"] is True
 
     def test_scaling_ops_structure(self):
         """Test that scaling_ops have required structure."""
-        required_scaling_keys = ['min', 'max', 'astype', 'check_float', 'check_int']
+        required_scaling_keys = ["min", "max", "astype", "check_float", "check_int"]
 
         for mem_type in MemoryType:
             config = _FRAMEWORK_CONFIG[mem_type]
-            scaling_ops = config['scaling_ops']
+            scaling_ops = config["scaling_ops"]
 
             # Skip frameworks with custom scaling (like pyclesperanto)
             if scaling_ops is None:
@@ -106,37 +111,42 @@ class TestFrameworkConfig:
         """Test that conversion_ops have required structure."""
         for mem_type in MemoryType:
             config = _FRAMEWORK_CONFIG[mem_type]
-            conversion_ops = config['conversion_ops']
+            conversion_ops = config["conversion_ops"]
 
             # All should have to_numpy
-            assert 'to_numpy' in conversion_ops
+            assert "to_numpy" in conversion_ops
 
             # GPU frameworks should have from_numpy
-            if config['is_gpu']:
-                assert 'from_numpy' in conversion_ops
+            if config["is_gpu"]:
+                assert "from_numpy" in conversion_ops
 
     def test_dlpack_support(self):
         """Test DLPack support configuration."""
         # Frameworks that support DLPack
-        dlpack_supported = [MemoryType.CUPY, MemoryType.TORCH, MemoryType.TENSORFLOW, MemoryType.JAX]
+        dlpack_supported = [
+            MemoryType.CUPY,
+            MemoryType.TORCH,
+            MemoryType.TENSORFLOW,
+            MemoryType.JAX,
+        ]
 
         for mem_type in MemoryType:
             config = _FRAMEWORK_CONFIG[mem_type]
             if mem_type in dlpack_supported:
-                assert config['supports_dlpack'] is True
+                assert config["supports_dlpack"] is True
             else:
-                assert config['supports_dlpack'] is False
+                assert config["supports_dlpack"] is False
 
     def test_gpu_frameworks_have_cleanup(self):
         """Test that GPU frameworks have cleanup operations."""
         for mem_type in MemoryType:
             config = _FRAMEWORK_CONFIG[mem_type]
-            if config['is_gpu']:
+            if config["is_gpu"]:
                 # GPU frameworks should have cleanup_ops (may be None for some)
-                assert 'cleanup_ops' in config
+                assert "cleanup_ops" in config
             else:
                 # CPU frameworks should have None cleanup
-                assert config['cleanup_ops'] is None
+                assert config["cleanup_ops"] is None
 
     def test_numpy_dtype_conversion_needed(self):
         """Test numpy dtype conversion check."""
@@ -164,7 +174,8 @@ class TestFrameworkConfig:
         def mock_detect(data):
             return "torch"
 
-                # Torch always needs dtype conversion
+            # Torch always needs dtype conversion
+
         assert _torch_dtype_conversion_needed("test", mock_detect) is True
 
     def test_pyclesperanto_get_device_id_unavailable(self, monkeypatch):
@@ -173,7 +184,7 @@ class TestFrameworkConfig:
         from arraybridge.framework_config import _pyclesperanto_get_device_id
 
         # Mock pyclesperanto as unavailable
-        monkeypatch.setitem(sys.modules, 'pyclesperanto', None)
+        monkeypatch.setitem(sys.modules, "pyclesperanto", None)
 
         # Should return 0 when pyclesperanto not available
         result = _pyclesperanto_get_device_id(None, None)
@@ -199,13 +210,13 @@ class TestFrameworkConfig:
         mock_device = types.SimpleNamespace()
         mock_devices = ["device0", "device1", "device2"]
         mock_module = types.SimpleNamespace(
-            get_device=lambda: mock_device,
-            list_available_devices=lambda: mock_devices
+            get_device=lambda: mock_device, list_available_devices=lambda: mock_devices
         )
 
         # Mock str() to return matching strings for comparison
         original_str = str
         str_calls = []
+
         def mock_str(obj):
             str_calls.append(obj)
             if obj is mock_device:
@@ -213,6 +224,7 @@ class TestFrameworkConfig:
             return original_str(obj)
 
         import builtins
+
         builtins.str = mock_str
 
         try:
@@ -227,7 +239,7 @@ class TestFrameworkConfig:
         from arraybridge.framework_config import _pyclesperanto_set_device
 
         # Mock pyclesperanto as unavailable
-        monkeypatch.setitem(sys.modules, 'pyclesperanto', None)
+        monkeypatch.setitem(sys.modules, "pyclesperanto", None)
 
         # Should not raise when pyclesperanto not available
         _pyclesperanto_set_device(0, None)
@@ -239,8 +251,7 @@ class TestFrameworkConfig:
 
         mock_devices = ["device0", "device1", "device2"]
         mock_module = types.SimpleNamespace(
-            list_available_devices=lambda: mock_devices,
-            select_device=lambda x: None
+            list_available_devices=lambda: mock_devices, select_device=lambda x: None
         )
 
         # Should not raise for valid device ID
@@ -251,9 +262,7 @@ class TestFrameworkConfig:
         from arraybridge.framework_config import _pyclesperanto_set_device
 
         mock_devices = ["device0", "device1"]
-        mock_module = types.SimpleNamespace(
-            list_available_devices=lambda: mock_devices
-        )
+        mock_module = types.SimpleNamespace(list_available_devices=lambda: mock_devices)
 
         # Should raise ValueError for invalid device ID
         with pytest.raises(ValueError, match="Device 5 not available"):
@@ -265,7 +274,7 @@ class TestFrameworkConfig:
         from arraybridge.framework_config import _pyclesperanto_move_to_device
 
         # Mock pyclesperanto as unavailable
-        monkeypatch.setitem(sys.modules, 'pyclesperanto', None)
+        monkeypatch.setitem(sys.modules, "pyclesperanto", None)
 
         # Should return data unchanged when pyclesperanto not available
         data = "test_data"
@@ -281,7 +290,7 @@ class TestFrameworkConfig:
         data = "test_data"
         mock_module = types.SimpleNamespace()
 
-        with unittest.mock.patch('arraybridge.utils._get_device_id', return_value=1):
+        with unittest.mock.patch("arraybridge.utils._get_device_id", return_value=1):
             result = _pyclesperanto_move_to_device(data, 1, mock_module, "pyclesperanto")
             assert result == data
 
@@ -295,10 +304,10 @@ class TestFrameworkConfig:
         mock_module = types.SimpleNamespace(
             select_device=lambda x: None,
             create_like=lambda d: result_data,
-            copy=lambda src, dst: None
+            copy=lambda src, dst: None,
         )
 
-        with unittest.mock.patch('arraybridge.utils._get_device_id', return_value=0):
+        with unittest.mock.patch("arraybridge.utils._get_device_id", return_value=0):
             result = _pyclesperanto_move_to_device(data, 1, mock_module, "pyclesperanto")
             assert result == result_data
 
@@ -308,7 +317,7 @@ class TestFrameworkConfig:
         from arraybridge.framework_config import _jax_assign_slice
 
         # Mock JAX as unavailable
-        monkeypatch.setitem(sys.modules, 'jax', None)
+        monkeypatch.setitem(sys.modules, "jax", None)
 
         # Should return None when result is None
         result = _jax_assign_slice(None, 0, None)
@@ -342,7 +351,7 @@ class TestFrameworkConfig:
         from arraybridge.framework_config import _tensorflow_validate_dlpack
 
         # Mock TensorFlow as unavailable
-        monkeypatch.setitem(sys.modules, 'tensorflow', None)
+        monkeypatch.setitem(sys.modules, "tensorflow", None)
 
         # Should return False when TensorFlow not available
         result = _tensorflow_validate_dlpack(None, None)
@@ -383,7 +392,7 @@ class TestFrameworkConfig:
         from arraybridge.framework_config import _pyclesperanto_stack_slices
 
         # Mock pyclesperanto as unavailable
-        monkeypatch.setitem(sys.modules, 'pyclesperanto', None)
+        monkeypatch.setitem(sys.modules, "pyclesperanto", None)
 
         # Should not raise when pyclesperanto not available
         result = _pyclesperanto_stack_slices([], "pyclesperanto", 0, None)

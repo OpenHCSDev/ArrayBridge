@@ -134,7 +134,7 @@ class TestSupportsChecks:
 
         arr = np.array([1, 2, 3])
         # NumPy 2.0+ has DLPack support, older versions don't
-        has_dlpack = hasattr(arr, '__dlpack__')
+        has_dlpack = hasattr(arr, "__dlpack__")
         assert _supports_dlpack(arr) == has_dlpack
 
     def test_supports_cuda_array_interface_object_without_it(self):
@@ -184,36 +184,40 @@ class TestDeviceOperations:
     def test_set_device_torch_mock(self, device_id, monkeypatch):
         """Test setting device for torch with mock."""
         import types
+
         mock_torch = types.SimpleNamespace(cuda=types.SimpleNamespace(set_device=lambda x: None))
-        monkeypatch.setitem(sys.modules, 'torch', mock_torch)
+        monkeypatch.setitem(sys.modules, "torch", mock_torch)
 
         from arraybridge.utils import _set_device
+
         _set_device("torch", device_id)
 
     def test_get_device_id_torch_mock(self, monkeypatch):
         """Test getting device ID for torch tensor with mock."""
         import types
+
         mock_device = types.SimpleNamespace(index=1)
         mock_tensor = types.SimpleNamespace(is_cuda=True, device=mock_device)
         mock_torch = types.SimpleNamespace(cuda=types.SimpleNamespace(current_device=lambda: 1))
-        monkeypatch.setitem(sys.modules, 'torch', mock_torch)
+        monkeypatch.setitem(sys.modules, "torch", mock_torch)
 
         from arraybridge.utils import _get_device_id
+
         device_id = _get_device_id(mock_tensor, "torch")
         assert device_id == 1
 
     def test_move_to_device_torch_mock(self, monkeypatch):
         """Test moving torch tensor to device with mock."""
         import types
+
         mock_tensor = types.SimpleNamespace(
-            is_cuda=True, 
-            device=types.SimpleNamespace(index=0),
-            to=lambda device: "moved_tensor"
+            is_cuda=True, device=types.SimpleNamespace(index=0), to=lambda device: "moved_tensor"
         )
         mock_torch = types.SimpleNamespace(cuda=types.SimpleNamespace(set_device=lambda x: None))
-        monkeypatch.setitem(sys.modules, 'torch', mock_torch)
+        monkeypatch.setitem(sys.modules, "torch", mock_torch)
 
         from arraybridge.utils import _move_to_device
+
         # Skip the complex eval and just test that the function calls the right path
         # For this test, we'll just verify it doesn't crash on the basic path
         # The actual device movement logic is tested elsewhere
@@ -233,17 +237,20 @@ class TestSupportsDLPackAdvanced:
     def test_supports_dlpack_tensorflow_cpu_tensor_fails(self, monkeypatch):
         """Test that TensorFlow CPU tensors fail DLPack check."""
         import types
-        
+
         class MockTFTensor:
             def __init__(self):
                 self.device = "CPU:0"
                 self.__class__.__module__ = "tensorflow"
                 self.__class__.__name__ = "Tensor"
+
             def __dlpack__(self):
                 return "dlpack_capsule"
-        
-        mock_tf = types.SimpleNamespace(__version__="2.15.0", experimental=types.SimpleNamespace(dlpack=object()))
-        monkeypatch.setitem(sys.modules, 'tensorflow', mock_tf)
+
+        mock_tf = types.SimpleNamespace(
+            __version__="2.15.0", experimental=types.SimpleNamespace(dlpack=object())
+        )
+        monkeypatch.setitem(sys.modules, "tensorflow", mock_tf)
 
         from arraybridge.utils import _supports_dlpack
 
@@ -256,17 +263,18 @@ class TestSupportsDLPackAdvanced:
     def test_supports_dlpack_tensorflow_old_version_fails(self, monkeypatch):
         """Test that old TensorFlow versions fail DLPack check."""
         import types
-        
+
         class MockTFTensor:
             def __init__(self):
                 self.device = "GPU:0"
                 self.__class__.__module__ = "tensorflow"
                 self.__class__.__name__ = "Tensor"
+
             def __dlpack__(self):
                 return "dlpack_capsule"
-        
+
         mock_tf = types.SimpleNamespace(__version__="2.10.0")
-        monkeypatch.setitem(sys.modules, 'tensorflow', mock_tf)
+        monkeypatch.setitem(sys.modules, "tensorflow", mock_tf)
 
         from arraybridge.utils import _supports_dlpack
 
@@ -279,17 +287,18 @@ class TestSupportsDLPackAdvanced:
     def test_supports_dlpack_tensorflow_missing_dlpack_module_fails(self, monkeypatch):
         """Test that TensorFlow without dlpack module fails."""
         import types
-        
+
         class MockTFTensor:
             def __init__(self):
                 self.device = "GPU:0"
                 self.__class__.__module__ = "tensorflow"
                 self.__class__.__name__ = "Tensor"
+
             def __dlpack__(self):
                 return "dlpack_capsule"
-        
+
         mock_tf = types.SimpleNamespace(__version__="2.15.0", experimental=types.SimpleNamespace())
-        monkeypatch.setitem(sys.modules, 'tensorflow', mock_tf)
+        monkeypatch.setitem(sys.modules, "tensorflow", mock_tf)
 
         from arraybridge.utils import _supports_dlpack
 
@@ -306,13 +315,13 @@ class TestEnsureModuleTensorFlowVersion:
     def test_ensure_module_tensorflow_old_version_raises_error(self, monkeypatch):
         """Test that old TensorFlow versions raise RuntimeError."""
         import types
-        
+
         # Mock old TensorFlow
         mock_tf = types.SimpleNamespace(__version__="2.10.0")
-        monkeypatch.setitem(sys.modules, 'tensorflow', mock_tf)
-        
+        monkeypatch.setitem(sys.modules, "tensorflow", mock_tf)
+
         from arraybridge.utils import _ensure_module
-        
+
         with pytest.raises(RuntimeError) as exc_info:
             _ensure_module("tensorflow")
         assert "TensorFlow version 2.10.0 is not supported" in str(exc_info.value)
@@ -328,14 +337,14 @@ class TestGetDeviceIdCallableHandler:
         from arraybridge.utils import _get_device_id
         from arraybridge.framework_config import _FRAMEWORK_CONFIG
         from arraybridge.types import MemoryType
-        
+
         # Create mock pyclesperanto module
         mock_cle = types.SimpleNamespace()
-        monkeypatch.setitem(sys.modules, 'pyclesperanto', mock_cle)
-        
+        monkeypatch.setitem(sys.modules, "pyclesperanto", mock_cle)
+
         # Create mock data
         mock_data = types.SimpleNamespace()
-        
+
         # Call _get_device_id for pyclesperanto (which uses a callable handler)
         try:
             device_id = _get_device_id(mock_data, "pyclesperanto")
@@ -349,12 +358,12 @@ class TestGetDeviceIdCallableHandler:
         """Test _get_device_id fallback when eval fails."""
         import types
         from arraybridge.utils import _get_device_id
-        
+
         # Create a mock torch tensor that will fail device ID extraction
         mock_tensor = types.SimpleNamespace()  # Missing device attribute
         mock_torch = types.SimpleNamespace()
-        monkeypatch.setitem(sys.modules, 'torch', mock_torch)
-        
+        monkeypatch.setitem(sys.modules, "torch", mock_torch)
+
         # This should trigger the exception handler and fallback
         device_id = _get_device_id(mock_tensor, "torch")
         # Should return None from fallback
@@ -373,14 +382,14 @@ class TestSupportsDLPackTensorFlowErrors:
                 self.device = "GPU:0"
                 self.__class__.__module__ = "tensorflow"
                 self.__class__.__name__ = "Tensor"
+
             def __dlpack__(self):
                 return "dlpack_capsule"
 
         mock_tf = types.SimpleNamespace(
-            __version__="2.15.0",
-            experimental=types.SimpleNamespace(dlpack=types.SimpleNamespace())
+            __version__="2.15.0", experimental=types.SimpleNamespace(dlpack=types.SimpleNamespace())
         )
-        monkeypatch.setitem(sys.modules, 'tensorflow', mock_tf)
+        monkeypatch.setitem(sys.modules, "tensorflow", mock_tf)
 
         from arraybridge.utils import _supports_dlpack
 

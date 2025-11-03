@@ -52,7 +52,7 @@ def detect_memory_type(data: Any) -> str:
     module_name = type(data).__module__
 
     for mem_type, config in _FRAMEWORK_CONFIG.items():
-        import_name = config['import_name']
+        import_name = config["import_name"]
         # Check if module name starts with or contains the import name
         if module_name.startswith(import_name) or import_name in module_name:
             return mem_type.value

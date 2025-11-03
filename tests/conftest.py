@@ -28,16 +28,16 @@ def _can_import_and_has_cuda(module_name):
     """Check if module is available and has CUDA."""
     try:
         module = __import__(module_name)
-        if module_name == 'cupy':
-            return hasattr(module, 'cuda')
-        elif module_name == 'torch':
-            return hasattr(module, 'cuda')
-        elif module_name == 'tensorflow':
-            return hasattr(module, 'config')
-        elif module_name == 'jax':
-            return hasattr(module, 'numpy')
-        elif module_name == 'pyclesperanto':
-            return hasattr(module, 'get_device')
+        if module_name == "cupy":
+            return hasattr(module, "cuda")
+        elif module_name == "torch":
+            return hasattr(module, "cuda")
+        elif module_name == "tensorflow":
+            return hasattr(module, "config")
+        elif module_name == "jax":
+            return hasattr(module, "numpy")
+        elif module_name == "pyclesperanto":
+            return hasattr(module, "get_device")
         return False
     except ImportError:
         return False
@@ -90,6 +90,7 @@ def torch_available():
     """Check if PyTorch is available."""
     try:
         import torch
+
         return True
     except ImportError:
         return False
@@ -100,6 +101,7 @@ def cupy_available():
     """Check if CuPy is available and has GPU access."""
     try:
         import cupy as cp
+
         # Try to create a small array to verify GPU access
         _ = cp.array([1, 2, 3])
         return True
@@ -113,6 +115,7 @@ def tensorflow_available():
     """Check if TensorFlow is available."""
     try:
         import tensorflow as tf
+
         return True
     except ImportError:
         return False
@@ -123,6 +126,7 @@ def jax_available():
     """Check if JAX is available."""
     try:
         import jax
+
         return True
     except ImportError:
         return False
@@ -133,6 +137,7 @@ def pyclesperanto_available():
     """Check if pyclesperanto is available."""
     try:
         import pyclesperanto_prototype
+
         return True
     except ImportError:
         return False
@@ -143,6 +148,7 @@ def gpu_available():
     """Check if a GPU is available (CUDA or similar)."""
     try:
         import torch
+
         if torch.cuda.is_available():
             return True
     except ImportError:
@@ -150,6 +156,7 @@ def gpu_available():
 
     try:
         import cupy as cp
+
         _ = cp.array([1])
         return True
     except (ImportError, Exception):

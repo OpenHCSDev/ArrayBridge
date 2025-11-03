@@ -18,11 +18,11 @@ from arraybridge.utils import optional_import
 
 # Scaling ranges for integer dtypes (shared across all memory types)
 _SCALING_RANGES = {
-    'uint8': 255.0,
-    'uint16': 65535.0,
-    'uint32': 4294967295.0,
-    'int16': (65535.0, 32768.0),  # (scale, offset)
-    'int32': (4294967295.0, 2147483648.0),
+    "uint8": 255.0,
+    "uint16": 65535.0,
+    "uint32": 4294967295.0,
+    "int16": (65535.0, 32768.0),  # (scale, offset)
+    "int32": (4294967295.0, 2147483648.0),
 }
 
 
@@ -41,25 +41,23 @@ def _scale_generic(result, target_dtype, mem_type: MemoryType):
         return _scale_pyclesperanto(result, target_dtype)
 
     config = _FRAMEWORK_CONFIG[mem_type]
-    ops = config['scaling_ops']
+    ops = config["scaling_ops"]
     mod = optional_import(mem_type.value)  # noqa: F841 (used in eval)
     if mod is None:
         return result
 
-    if not hasattr(result, 'dtype'):
+    if not hasattr(result, "dtype"):
         return result
 
     # Extra imports (e.g., jax.numpy) - load first as dtype_map might need it
-    if 'extra_import' in ops:
-        jnp = optional_import(ops['extra_import'])  # noqa: F841 (used in eval)
+    if "extra_import" in ops:
+        jnp = optional_import(ops["extra_import"])  # noqa: F841 (used in eval)
 
     # Handle dtype mapping for frameworks that need it
     target_dtype_mapped = target_dtype  # noqa: F841 (used in eval)
-    if ops.get('needs_dtype_map'):
+    if ops.get("needs_dtype_map"):
         # Use jnp for JAX, mod for others
-        dtype_module = (
-            jnp if 'extra_import' in ops and jnp is not None else mod
-        )
+        dtype_module = jnp if "extra_import" in ops and jnp is not None else mod
         dtype_map = {
             np.uint8: dtype_module.uint8,
             np.int8: dtype_module.int8,
@@ -70,34 +68,32 @@ def _scale_generic(result, target_dtype, mem_type: MemoryType):
             np.float32: dtype_module.float32,
             np.float64: dtype_module.float64,
         }
-        target_dtype_mapped = dtype_map.get(  # noqa: F841
-            target_dtype, dtype_module.float32
-        )
+        target_dtype_mapped = dtype_map.get(target_dtype, dtype_module.float32)  # noqa: F841
 
     # Check if conversion needed (float → int)
-    result_is_float = eval(ops['check_float'])
-    target_is_int = eval(ops['check_int'])
+    result_is_float = eval(ops["check_float"])
+    target_is_int = eval(ops["check_int"])
 
     if not (result_is_float and target_is_int):
         # Direct conversion
-        return eval(ops['astype'])
+        return eval(ops["astype"])
 
     # Get min/max
-    result_min = eval(ops['min'])  # noqa: F841 (used in eval)
-    result_max = eval(ops['max'])  # noqa: F841 (used in eval)
+    result_min = eval(ops["min"])  # noqa: F841 (used in eval)
+    result_max = eval(ops["max"])  # noqa: F841 (used in eval)
 
     if result_max <= result_min:
         # Constant image
-        return eval(ops['astype'])
+        return eval(ops["astype"])
 
     # Normalize to [0, 1]
     normalized = (result - result_min) / (result_max - result_min)  # noqa: F841 (used in eval)
 
     # Scale to target range
-    if hasattr(target_dtype, '__name__'):
+    if hasattr(target_dtype, "__name__"):
         dtype_name = target_dtype.__name__
     else:
-        dtype_name = str(target_dtype).split('.')[-1]
+        dtype_name = str(target_dtype).split(".")[-1]
 
     if dtype_name in _SCALING_RANGES:
         range_info = _SCALING_RANGES[dtype_name]
@@ -111,7 +107,9 @@ def _scale_generic(result, target_dtype, mem_type: MemoryType):
             # We need to use a max value that's safely below INT32_MAX when rounded
             # Subtracting 128 gives us a safe margin while still using most of the range
             min_val = -offset_val  # noqa: F841 (used in eval)
-            max_val = scale_val - offset_val - 128  # Safe margin for float32 precision  # noqa: F841 E501
+            max_val = (
+                scale_val - offset_val - 128
+            )  # Safe margin for float32 precision  # noqa: F841 E501
         else:
             result = normalized * range_info  # noqa: F841 (used in eval)
             # For unsigned types: range is [0, range_info]
@@ -119,19 +117,19 @@ def _scale_generic(result, target_dtype, mem_type: MemoryType):
             max_val = range_info  # noqa: F841 (used in eval)
 
         # Clamp to prevent overflow due to float32 precision issues
-        if ops.get('clamp'):
-            result = eval(ops['clamp'])  # noqa: F841 (used in eval)
+        if ops.get("clamp"):
+            result = eval(ops["clamp"])  # noqa: F841 (used in eval)
     else:
         result = normalized  # noqa: F841 (used in eval)
 
     # Convert dtype
-    return eval(ops['astype'])
+    return eval(ops["astype"])
 
 
 def _scale_pyclesperanto(result, target_dtype):
     """Scale pyclesperanto results (GPU operations require special handling)."""
     cle = optional_import("pyclesperanto")
-    if cle is None or not hasattr(result, 'dtype'):
+    if cle is None or not hasattr(result, "dtype"):
         return result
 
     # Check if result is floating point and target is integer
@@ -153,7 +151,7 @@ def _scale_pyclesperanto(result, target_dtype):
     # Normalize to [0, 1] using GPU operations
     normalized = cle.subtract_image_from_scalar(result, scalar=result_min)
     range_val = result_max - result_min
-    normalized = cle.multiply_image_and_scalar(normalized, scalar=1.0/range_val)
+    normalized = cle.multiply_image_and_scalar(normalized, scalar=1.0 / range_val)
 
     # Scale to target range
     dtype_name = target_dtype.__name__
@@ -174,10 +172,8 @@ def _scale_pyclesperanto(result, target_dtype):
 
 # Auto-generate all scaling functions using partial application
 _SCALING_FUNCTIONS_GENERATED = {
-    mem_type.value: partial(_scale_generic, mem_type=mem_type)
-    for mem_type in MemoryType
+    mem_type.value: partial(_scale_generic, mem_type=mem_type) for mem_type in MemoryType
 }
 
 # Registry mapping memory type names to scaling functions (backward compatibility)
 SCALING_FUNCTIONS = _SCALING_FUNCTIONS_GENERATED
-

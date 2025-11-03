@@ -38,13 +38,14 @@ class TestMemoryTypesDecorator:
 
     def test_memory_types_basic_decoration(self):
         """Test basic memory_types decorator functionality."""
+
         @memory_types("numpy", "numpy")
         def test_func(x):
             return x * 2
 
         # Check metadata is attached
-        assert hasattr(test_func, 'input_memory_type')
-        assert hasattr(test_func, 'output_memory_type')
+        assert hasattr(test_func, "input_memory_type")
+        assert hasattr(test_func, "output_memory_type")
         assert test_func.input_memory_type == "numpy"
         assert test_func.output_memory_type == "numpy"
 
@@ -54,6 +55,7 @@ class TestMemoryTypesDecorator:
 
     def test_memory_types_with_contract(self):
         """Test memory_types decorator with contract validation."""
+
         def positive_contract(x):
             return x > 0
 
@@ -71,6 +73,7 @@ class TestMemoryTypesDecorator:
 
     def test_memory_types_preserves_function_metadata(self):
         """Test that memory_types preserves function name, docstring, etc."""
+
         @memory_types("numpy", "numpy")
         def test_func(x, y=10):
             """Test function docstring."""
@@ -88,6 +91,7 @@ class TestFrameworkDecorators:
     def test_numpy_decorator_exists(self):
         """Test that numpy decorator is available."""
         from arraybridge.decorators import numpy
+
         assert callable(numpy)
 
     def test_numpy_decorator_basic(self):
@@ -141,26 +145,31 @@ class TestFrameworkDecorators:
     def test_cupy_decorator_exists(self):
         """Test that cupy decorator is available."""
         from arraybridge.decorators import cupy
+
         assert callable(cupy)
 
     def test_torch_decorator_exists(self):
         """Test that torch decorator is available."""
         from arraybridge.decorators import torch
+
         assert callable(torch)
 
     def test_tensorflow_decorator_exists(self):
         """Test that tensorflow decorator is available."""
         from arraybridge.decorators import tensorflow
+
         assert callable(tensorflow)
 
     def test_jax_decorator_exists(self):
         """Test that jax decorator is available."""
         from arraybridge.decorators import jax
+
         assert callable(jax)
 
     def test_pyclesperanto_decorator_exists(self):
         """Test that pyclesperanto decorator is available."""
         from arraybridge.decorators import pyclesperanto
+
         assert callable(pyclesperanto)
 
 
@@ -199,9 +208,10 @@ class TestDecoratorParameters:
 
         # Check that slice_by_slice parameter was added to signature
         import inspect
+
         sig = inspect.signature(process_3d)
-        assert 'slice_by_slice' in sig.parameters
-        assert 'dtype_conversion' in sig.parameters
+        assert "slice_by_slice" in sig.parameters
+        assert "dtype_conversion" in sig.parameters
 
         # Test with slice_by_slice=False (default)
         arr_3d = np.random.rand(3, 10, 10)

@@ -46,19 +46,19 @@ def _is_oom_error(e: Exception, memory_type: str) -> bool:
     error_str = str(e).lower()
 
     # Check framework-specific exception types
-    for exc_type_expr in ops['oom_exception_types']:
+    for exc_type_expr in ops["oom_exception_types"]:
         try:
             # Import the module and get the exception type
-            mod_name = ops['import_name']
+            mod_name = ops["import_name"]
             mod = optional_import(mod_name)
             if mod is None:
                 continue
 
             # Evaluate the exception type expression
-            exc_type_str = exc_type_expr.format(mod='mod')
+            exc_type_str = exc_type_expr.format(mod="mod")
             # Extract the attribute path
             # (e.g., 'mod.cuda.OutOfMemoryError' -> ['cuda', 'OutOfMemoryError'])
-            parts = exc_type_str.split('.')[1:]  # Skip 'mod'
+            parts = exc_type_str.split(".")[1:]  # Skip 'mod'
             exc_type = mod
             for part in parts:
                 if hasattr(exc_type, part):
@@ -73,7 +73,7 @@ def _is_oom_error(e: Exception, memory_type: str) -> bool:
             continue
 
     # String-based detection using framework-specific patterns
-    return any(pattern in error_str for pattern in ops['oom_string_patterns'])
+    return any(pattern in error_str for pattern in ops["oom_string_patterns"])
 
 
 def _clear_cache_for_memory_type(memory_type: str, device_id: Optional[int] = None):
@@ -101,7 +101,7 @@ def _clear_cache_for_memory_type(memory_type: str, device_id: Optional[int] = No
     ops = _FRAMEWORK_OPS[mem_type_enum]
 
     # Get the module
-    mod_name = ops['import_name']
+    mod_name = ops["import_name"]
     mod = optional_import(mod_name)
 
     if mod is None:
@@ -110,11 +110,11 @@ def _clear_cache_for_memory_type(memory_type: str, device_id: Optional[int] = No
         return
 
     # Execute cache clearing operations
-    cache_clear_expr = ops['oom_clear_cache']
+    cache_clear_expr = ops["oom_clear_cache"]
     if cache_clear_expr:
         try:
             # Execute cache clear directly (device context handled by the operations themselves)
-            exec(cache_clear_expr.format(mod=mod_name), {mod_name: mod, 'gc': gc})
+            exec(cache_clear_expr.format(mod=mod_name), {mod_name: mod, "gc": gc})
         except Exception as e:
             logger.warning(f"Failed to clear cache for {memory_type}: {e}")
 

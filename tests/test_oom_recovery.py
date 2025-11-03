@@ -42,10 +42,7 @@ class TestOOMRecovery:
             assert _is_oom_error(e, "torch") is True, f"Failed to detect OOM in torch: {msg}"
 
         # Test numpy patterns
-        numpy_oom_messages = [
-            "memory exhausted",
-            "cannot allocate memory"
-        ]
+        numpy_oom_messages = ["memory exhausted", "cannot allocate memory"]
         for msg in numpy_oom_messages:
             e = Exception(msg)
             assert _is_oom_error(e, "numpy") is True, f"Failed to detect OOM in numpy: {msg}"
@@ -138,6 +135,7 @@ class TestOOMRecovery:
         result = _execute_with_oom_recovery(failing_then_success_func, memory_type, max_retries=1)
         assert result == f"success_{memory_type}"
         assert call_count["count"] == 2
+
 
 def test_torch_cache_clear_mock():
     """Test torch cache clear with mocked torch."""

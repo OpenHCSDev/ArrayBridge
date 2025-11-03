@@ -99,11 +99,14 @@ class TestProcessSlices:
         # In practice, functions should be consistent
         pass  # Skip this test as it requires more complex logic
 
-    @pytest.mark.parametrize("shape", [
-        (1, 2, 2),  # Single slice
-        (3, 2, 2),  # Three slices
-        (2, 3, 4),  # Different dimensions
-    ])
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            (1, 2, 2),  # Single slice
+            (3, 2, 2),  # Three slices
+            (2, 3, 4),  # Different dimensions
+        ],
+    )
     def test_process_slices_different_shapes(self, shape):
         """Test process_slices with different 3D array shapes."""
         from arraybridge.slice_processing import process_slices

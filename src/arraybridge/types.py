@@ -8,7 +8,7 @@ different array/tensor frameworks.
 from enum import Enum
 from typing import Any, Callable, TypeVar
 
-T = TypeVar('T')
+T = TypeVar("T")
 ConversionFunc = Callable[[Any], Any]
 
 
@@ -26,6 +26,7 @@ class MemoryType(Enum):
     def converter(self):
         """Get the converter instance for this memory type."""
         from arraybridge.converters_registry import get_converter
+
         return get_converter(self.value)
 
 
@@ -38,6 +39,7 @@ def _add_conversion_methods():
         def make_method(target):
             def method(self, data, gpu_id):
                 return getattr(self.converter, f"to_{target.value}")(data, gpu_id)
+
             return method
 
         setattr(MemoryType, method_name, make_method(target_type))
@@ -53,7 +55,7 @@ GPU_MEMORY_TYPES: set[MemoryType] = {
     MemoryType.TORCH,
     MemoryType.TENSORFLOW,
     MemoryType.JAX,
-    MemoryType.PYCLESPERANTO
+    MemoryType.PYCLESPERANTO,
 }
 SUPPORTED_MEMORY_TYPES: set[MemoryType] = CPU_MEMORY_TYPES | GPU_MEMORY_TYPES
 

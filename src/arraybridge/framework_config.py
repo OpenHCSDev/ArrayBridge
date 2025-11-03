@@ -23,13 +23,14 @@ logger = logging.getLogger(__name__)
 # FRAMEWORK HANDLERS - All special-case logic lives here
 # ============================================================================
 
+
 def _pyclesperanto_get_device_id(data: Any, mod: Any) -> int:
     """Get device ID for pyclesperanto array."""
     if mod is None:
         return 0
     try:
         current_device = mod.get_device()
-        if hasattr(current_device, 'id'):
+        if hasattr(current_device, "id"):
             return current_device.id
         devices = mod.list_available_devices()
         for i, device in enumerate(devices):
@@ -111,7 +112,7 @@ def _tensorflow_validate_dlpack(obj: Any, mod: Any) -> bool:
     if mod is None:
         return False
     # Check version
-    major, minor = map(int, mod.__version__.split('.')[:2])
+    major, minor = map(int, mod.__version__.split(".")[:2])
     if major < 2 or (major == 2 and minor < 12):
         raise RuntimeError(
             f"TensorFlow {mod.__version__} does not support stable DLPack. "
@@ -122,7 +123,7 @@ def _tensorflow_validate_dlpack(obj: Any, mod: Any) -> bool:
     # Check GPU
     """Validate TensorFlow DLPack support."""
     # Check version
-    major, minor = map(int, mod.__version__.split('.')[:2])
+    major, minor = map(int, mod.__version__.split(".")[:2])
     if major < 2 or (major == 2 and minor < 12):
         raise RuntimeError(
             f"TensorFlow {mod.__version__} does not support stable DLPack. "
@@ -167,321 +168,286 @@ def _torch_dtype_conversion_needed(first_slice: Any, detect_memory_type_func: Ca
 _FRAMEWORK_CONFIG = {
     MemoryType.NUMPY: {
         # Metadata
-        'import_name': 'numpy',
-        'display_name': 'NumPy',
-        'is_gpu': False,
-
+        "import_name": "numpy",
+        "display_name": "NumPy",
+        "is_gpu": False,
         # Device operations
-        'get_device_id': None,  # CPU
-        'set_device': None,  # CPU
-        'move_to_device': None,  # CPU
-
+        "get_device_id": None,  # CPU
+        "set_device": None,  # CPU
+        "move_to_device": None,  # CPU
         # Stack operations
-        'allocate_stack': 'np.empty(stack_shape, dtype=dtype)',
-        'allocate_context': None,
-        'needs_dtype_conversion': _numpy_dtype_conversion_needed,  # Callable
-        'assign_slice': None,  # Standard: result[i] = slice
-        'stack_handler': None,  # Standard stacking
-
+        "allocate_stack": "np.empty(stack_shape, dtype=dtype)",
+        "allocate_context": None,
+        "needs_dtype_conversion": _numpy_dtype_conversion_needed,  # Callable
+        "assign_slice": None,  # Standard: result[i] = slice
+        "stack_handler": None,  # Standard stacking
         # Dtype scaling
-        'scaling_ops': {
-            'min': 'result.min()',
-            'max': 'result.max()',
-            'astype': 'result.astype(target_dtype)',
-            'check_float': 'np.issubdtype(result.dtype, np.floating)',
-            'check_int': 'target_dtype in [np.uint8, np.uint16, np.uint32, np.int8, np.int16, np.int32]',  # noqa: E501
-            'clamp': 'np.clip(result, min_val, max_val)',
+        "scaling_ops": {
+            "min": "result.min()",
+            "max": "result.max()",
+            "astype": "result.astype(target_dtype)",
+            "check_float": "np.issubdtype(result.dtype, np.floating)",
+            "check_int": "target_dtype in [np.uint8, np.uint16, np.uint32, np.int8, np.int16, np.int32]",  # noqa: E501
+            "clamp": "np.clip(result, min_val, max_val)",
         },
-
         # Conversion operations
-        'conversion_ops': {
-            'to_numpy': 'data',
-            'from_numpy': 'data',
-            'from_dlpack': None,
-            'move_to_device': 'data',
+        "conversion_ops": {
+            "to_numpy": "data",
+            "from_numpy": "data",
+            "from_dlpack": None,
+            "move_to_device": "data",
         },
-
         # DLPack
-        'supports_dlpack': False,
-        'validate_dlpack': None,
-
+        "supports_dlpack": False,
+        "validate_dlpack": None,
         # GPU/Cleanup
-        'lazy_getter': None,
-        'gpu_check': None,
-        'stream_context': None,
-        'device_context': None,
-        'cleanup_ops': None,
-        'has_oom_recovery': False,
-        'oom_exception_types': [],
-        'oom_string_patterns': ['cannot allocate memory', 'memory exhausted'],
-        'oom_clear_cache': 'import gc; gc.collect()',
+        "lazy_getter": None,
+        "gpu_check": None,
+        "stream_context": None,
+        "device_context": None,
+        "cleanup_ops": None,
+        "has_oom_recovery": False,
+        "oom_exception_types": [],
+        "oom_string_patterns": ["cannot allocate memory", "memory exhausted"],
+        "oom_clear_cache": "import gc; gc.collect()",
     },
-
     MemoryType.CUPY: {
         # Metadata
-        'import_name': 'cupy',
-        'display_name': 'CuPy',
-        'is_gpu': True,
-
+        "import_name": "cupy",
+        "display_name": "CuPy",
+        "is_gpu": True,
         # Device operations (eval expressions)
-        'get_device_id': 'data.device.id',
-        'get_device_id_fallback': '0',
-        'set_device': '{mod}.cuda.Device(device_id).use()',
-        'move_to_device': 'data.copy() if data.device.id != device_id else data',
-        'move_context': '{mod}.cuda.Device(device_id)',
-
+        "get_device_id": "data.device.id",
+        "get_device_id_fallback": "0",
+        "set_device": "{mod}.cuda.Device(device_id).use()",
+        "move_to_device": "data.copy() if data.device.id != device_id else data",
+        "move_context": "{mod}.cuda.Device(device_id)",
         # Stack operations
-        'allocate_stack': 'cupy.empty(stack_shape, dtype=first_slice.dtype)',
-        'allocate_context': 'cupy.cuda.Device(gpu_id)',
-        'needs_dtype_conversion': False,
-        'assign_slice': None,  # Standard
-        'stack_handler': None,  # Standard
-
+        "allocate_stack": "cupy.empty(stack_shape, dtype=first_slice.dtype)",
+        "allocate_context": "cupy.cuda.Device(gpu_id)",
+        "needs_dtype_conversion": False,
+        "assign_slice": None,  # Standard
+        "stack_handler": None,  # Standard
         # Dtype scaling
-        'scaling_ops': {
-            'min': 'mod.min(result)',
-            'max': 'mod.max(result)',
-            'astype': 'result.astype(target_dtype)',
-            'check_float': 'mod.issubdtype(result.dtype, mod.floating)',
-            'check_int': 'not mod.issubdtype(target_dtype, mod.floating)',
-            'clamp': 'mod.clip(result, min_val, max_val)',
+        "scaling_ops": {
+            "min": "mod.min(result)",
+            "max": "mod.max(result)",
+            "astype": "result.astype(target_dtype)",
+            "check_float": "mod.issubdtype(result.dtype, mod.floating)",
+            "check_int": "not mod.issubdtype(target_dtype, mod.floating)",
+            "clamp": "mod.clip(result, min_val, max_val)",
         },
-
         # Conversion operations
-        'conversion_ops': {
-            'to_numpy': 'data.get()',
-            'from_numpy': '({mod}.cuda.Device(gpu_id), {mod}.array(data))[1]',
-            'from_dlpack': '{mod}.from_dlpack(data)',
-            'move_to_device': 'data if data.device.id == gpu_id else ({mod}.cuda.Device(gpu_id), {mod}.array(data))[1]',  # noqa: E501
+        "conversion_ops": {
+            "to_numpy": "data.get()",
+            "from_numpy": "({mod}.cuda.Device(gpu_id), {mod}.array(data))[1]",
+            "from_dlpack": "{mod}.from_dlpack(data)",
+            "move_to_device": "data if data.device.id == gpu_id else ({mod}.cuda.Device(gpu_id), {mod}.array(data))[1]",  # noqa: E501
         },
-
         # DLPack
-        'supports_dlpack': True,
-        'validate_dlpack': None,
-
+        "supports_dlpack": True,
+        "validate_dlpack": None,
         # GPU/Cleanup
-        'lazy_getter': '_get_cupy',
-        'gpu_check': '{mod} is not None and hasattr({mod}, "cuda")',
-        'stream_context': '{mod}.cuda.Stream()',
-        'device_context': '{mod}.cuda.Device({device_id})',
-        'cleanup_ops': '{mod}.get_default_memory_pool().free_all_blocks(); {mod}.get_default_pinned_memory_pool().free_all_blocks(); {mod}.cuda.runtime.deviceSynchronize()',  # noqa: E501
-        'has_oom_recovery': True,
-        'oom_exception_types': ['{mod}.cuda.memory.OutOfMemoryError', '{mod}.cuda.runtime.CUDARuntimeError'],  # noqa: E501
-        'oom_string_patterns': ['out of memory', 'cuda_error_out_of_memory'],
-        'oom_clear_cache': '{mod}.get_default_memory_pool().free_all_blocks(); {mod}.get_default_pinned_memory_pool().free_all_blocks(); {mod}.cuda.runtime.deviceSynchronize()',  # noqa: E501
+        "lazy_getter": "_get_cupy",
+        "gpu_check": '{mod} is not None and hasattr({mod}, "cuda")',
+        "stream_context": "{mod}.cuda.Stream()",
+        "device_context": "{mod}.cuda.Device({device_id})",
+        "cleanup_ops": "{mod}.get_default_memory_pool().free_all_blocks(); {mod}.get_default_pinned_memory_pool().free_all_blocks(); {mod}.cuda.runtime.deviceSynchronize()",  # noqa: E501
+        "has_oom_recovery": True,
+        "oom_exception_types": [
+            "{mod}.cuda.memory.OutOfMemoryError",
+            "{mod}.cuda.runtime.CUDARuntimeError",
+        ],  # noqa: E501
+        "oom_string_patterns": ["out of memory", "cuda_error_out_of_memory"],
+        "oom_clear_cache": "{mod}.get_default_memory_pool().free_all_blocks(); {mod}.get_default_pinned_memory_pool().free_all_blocks(); {mod}.cuda.runtime.deviceSynchronize()",  # noqa: E501
     },
-
     MemoryType.TORCH: {
         # Metadata
-        'import_name': 'torch',
-        'display_name': 'PyTorch',
-        'is_gpu': True,
-
+        "import_name": "torch",
+        "display_name": "PyTorch",
+        "is_gpu": True,
         # Device operations
-        'get_device_id': 'data.device.index if data.is_cuda else None',
-        'get_device_id_fallback': 'None',
-        'set_device': None,  # PyTorch handles device at tensor creation
-        'move_to_device': 'data.to(f"cuda:{device_id}") if (not data.is_cuda or data.device.index != device_id) else data',  # noqa: E501
-
+        "get_device_id": "data.device.index if data.is_cuda else None",
+        "get_device_id_fallback": "None",
+        "set_device": None,  # PyTorch handles device at tensor creation
+        "move_to_device": 'data.to(f"cuda:{device_id}") if (not data.is_cuda or data.device.index != device_id) else data',  # noqa: E501
         # Stack operations
-        'allocate_stack': 'torch.empty(stack_shape, dtype=sample_converted.dtype, device=sample_converted.device)',  # noqa: E501
-        'allocate_context': None,
-        'needs_dtype_conversion': _torch_dtype_conversion_needed,  # Callable
-        'assign_slice': None,  # Standard
-        'stack_handler': None,  # Standard
-
+        "allocate_stack": "torch.empty(stack_shape, dtype=sample_converted.dtype, device=sample_converted.device)",  # noqa: E501
+        "allocate_context": None,
+        "needs_dtype_conversion": _torch_dtype_conversion_needed,  # Callable
+        "assign_slice": None,  # Standard
+        "stack_handler": None,  # Standard
         # Dtype scaling
-        'scaling_ops': {
-            'min': 'result.min()',
-            'max': 'result.max()',
-            'astype': 'result.to(target_dtype_mapped)',
-            'check_float': 'result.dtype in [mod.float16, mod.float32, mod.float64]',
-            'check_int': 'target_dtype_mapped in [mod.uint8, mod.int8, mod.int16, mod.int32, mod.int64]',  # noqa: E501
-            'needs_dtype_map': True,
-            'clamp': 'mod.clamp(result, min=min_val, max=max_val)',
+        "scaling_ops": {
+            "min": "result.min()",
+            "max": "result.max()",
+            "astype": "result.to(target_dtype_mapped)",
+            "check_float": "result.dtype in [mod.float16, mod.float32, mod.float64]",
+            "check_int": "target_dtype_mapped in [mod.uint8, mod.int8, mod.int16, mod.int32, mod.int64]",  # noqa: E501
+            "needs_dtype_map": True,
+            "clamp": "mod.clamp(result, min=min_val, max=max_val)",
         },
-
         # Conversion operations
-        'conversion_ops': {
-            'to_numpy': 'data.cpu().numpy()',
-            'from_numpy': '{mod}.from_numpy(data).cuda(gpu_id)',
-            'from_dlpack': '{mod}.from_dlpack(data)',
-            'move_to_device': 'data if data.device.index == gpu_id else data.cuda(gpu_id)',
+        "conversion_ops": {
+            "to_numpy": "data.cpu().numpy()",
+            "from_numpy": "{mod}.from_numpy(data).cuda(gpu_id)",
+            "from_dlpack": "{mod}.from_dlpack(data)",
+            "move_to_device": "data if data.device.index == gpu_id else data.cuda(gpu_id)",
         },
-
         # DLPack
-        'supports_dlpack': True,
-        'validate_dlpack': None,
-
+        "supports_dlpack": True,
+        "validate_dlpack": None,
         # GPU/Cleanup
-        'lazy_getter': '_get_torch',
-        'gpu_check': '{mod} is not None and hasattr({mod}, "cuda") and {mod}.cuda.is_available()',
-        'stream_context': '{mod}.cuda.Stream()',
-        'device_context': '{mod}.cuda.device({device_id})',
-        'cleanup_ops': '{mod}.cuda.empty_cache(); {mod}.cuda.synchronize()',
-        'has_oom_recovery': True,
-        'oom_exception_types': ['{mod}.cuda.OutOfMemoryError'],
-        'oom_string_patterns': ['out of memory', 'cuda_error_out_of_memory'],
-        'oom_clear_cache': '{mod}.cuda.empty_cache(); {mod}.cuda.synchronize()',
+        "lazy_getter": "_get_torch",
+        "gpu_check": '{mod} is not None and hasattr({mod}, "cuda") and {mod}.cuda.is_available()',
+        "stream_context": "{mod}.cuda.Stream()",
+        "device_context": "{mod}.cuda.device({device_id})",
+        "cleanup_ops": "{mod}.cuda.empty_cache(); {mod}.cuda.synchronize()",
+        "has_oom_recovery": True,
+        "oom_exception_types": ["{mod}.cuda.OutOfMemoryError"],
+        "oom_string_patterns": ["out of memory", "cuda_error_out_of_memory"],
+        "oom_clear_cache": "{mod}.cuda.empty_cache(); {mod}.cuda.synchronize()",
     },
-
     MemoryType.TENSORFLOW: {
         # Metadata
-        'import_name': 'tensorflow',
-        'display_name': 'TensorFlow',
-        'is_gpu': True,
-
+        "import_name": "tensorflow",
+        "display_name": "TensorFlow",
+        "is_gpu": True,
         # Device operations
-        'get_device_id': 'int(data.device.lower().split(":")[-1]) if "gpu" in data.device.lower() else None',  # noqa: E501
-        'get_device_id_fallback': 'None',
-        'set_device': None,  # TensorFlow handles device at tensor creation
-        'move_to_device': '{mod}.identity(data)',
-        'move_context': '{mod}.device(f"/device:GPU:{device_id}")',
-
+        "get_device_id": 'int(data.device.lower().split(":")[-1]) if "gpu" in data.device.lower() else None',  # noqa: E501
+        "get_device_id_fallback": "None",
+        "set_device": None,  # TensorFlow handles device at tensor creation
+        "move_to_device": "{mod}.identity(data)",
+        "move_context": '{mod}.device(f"/device:GPU:{device_id}")',
         # Stack operations
-        'allocate_stack': 'tf.zeros(stack_shape, dtype=first_slice.dtype)',  # TF doesn't have empty()  # noqa: E501
-        'allocate_context': 'tf.device(f"/device:GPU:{gpu_id}")',
-        'needs_dtype_conversion': False,
-        'assign_slice': None,  # Standard
-        'stack_handler': None,  # Standard
-
+        "allocate_stack": "tf.zeros(stack_shape, dtype=first_slice.dtype)",  # TF doesn't have empty()  # noqa: E501
+        "allocate_context": 'tf.device(f"/device:GPU:{gpu_id}")',
+        "needs_dtype_conversion": False,
+        "assign_slice": None,  # Standard
+        "stack_handler": None,  # Standard
         # Dtype scaling
-        'scaling_ops': {
-            'min': 'mod.reduce_min(result)',
-            'max': 'mod.reduce_max(result)',
-            'astype': 'mod.cast(result, target_dtype_mapped)',
-            'check_float': 'result.dtype in [mod.float16, mod.float32, mod.float64]',
-            'check_int': 'target_dtype_mapped in [mod.uint8, mod.int8, mod.int16, mod.int32, mod.int64]',  # noqa: E501
-            'needs_dtype_map': True,
-            'clamp': 'mod.clip_by_value(result, min_val, max_val)',
+        "scaling_ops": {
+            "min": "mod.reduce_min(result)",
+            "max": "mod.reduce_max(result)",
+            "astype": "mod.cast(result, target_dtype_mapped)",
+            "check_float": "result.dtype in [mod.float16, mod.float32, mod.float64]",
+            "check_int": "target_dtype_mapped in [mod.uint8, mod.int8, mod.int16, mod.int32, mod.int64]",  # noqa: E501
+            "needs_dtype_map": True,
+            "clamp": "mod.clip_by_value(result, min_val, max_val)",
         },
-
         # Conversion operations
-        'conversion_ops': {
-            'to_numpy': 'data.numpy()',
-            'from_numpy': '{mod}.convert_to_tensor(data)',
-            'from_dlpack': '{mod}.experimental.dlpack.from_dlpack(data)',
-            'move_to_device': 'data',
+        "conversion_ops": {
+            "to_numpy": "data.numpy()",
+            "from_numpy": "{mod}.convert_to_tensor(data)",
+            "from_dlpack": "{mod}.experimental.dlpack.from_dlpack(data)",
+            "move_to_device": "data",
         },
-
         # DLPack
-        'supports_dlpack': True,
-        'validate_dlpack': _tensorflow_validate_dlpack,  # Custom validation
-
+        "supports_dlpack": True,
+        "validate_dlpack": _tensorflow_validate_dlpack,  # Custom validation
         # GPU/Cleanup
-        'lazy_getter': '_get_tensorflow',
-        'gpu_check': '{mod} is not None and {mod}.config.list_physical_devices("GPU")',
-        'stream_context': None,  # TensorFlow manages streams internally
-        'device_context': '{mod}.device("/GPU:0")',
-        'cleanup_ops': None,  # TensorFlow has no explicit cache clearing API
-        'has_oom_recovery': True,
-        'oom_exception_types': [
-            '{mod}.errors.ResourceExhaustedError',
-            '{mod}.errors.InvalidArgumentError',
+        "lazy_getter": "_get_tensorflow",
+        "gpu_check": '{mod} is not None and {mod}.config.list_physical_devices("GPU")',
+        "stream_context": None,  # TensorFlow manages streams internally
+        "device_context": '{mod}.device("/GPU:0")',
+        "cleanup_ops": None,  # TensorFlow has no explicit cache clearing API
+        "has_oom_recovery": True,
+        "oom_exception_types": [
+            "{mod}.errors.ResourceExhaustedError",
+            "{mod}.errors.InvalidArgumentError",
         ],
-        'oom_string_patterns': ['out of memory', 'resource_exhausted'],
-        'oom_clear_cache': None,  # TensorFlow has no explicit cache clearing API
+        "oom_string_patterns": ["out of memory", "resource_exhausted"],
+        "oom_clear_cache": None,  # TensorFlow has no explicit cache clearing API
     },
-
     MemoryType.JAX: {
         # Metadata
-        'import_name': 'jax',
-        'display_name': 'JAX',
-        'is_gpu': True,
-
+        "import_name": "jax",
+        "display_name": "JAX",
+        "is_gpu": True,
         # Device operations
-        'get_device_id': 'int(str(data.device).lower().split(":")[-1]) if "gpu" in str(data.device).lower() else None',  # noqa: E501
-        'get_device_id_fallback': 'None',
-        'set_device': None,  # JAX handles device at array creation
-        'move_to_device': '{mod}.device_put(data, {mod}.devices("gpu")[device_id])',
-
+        "get_device_id": 'int(str(data.device).lower().split(":")[-1]) if "gpu" in str(data.device).lower() else None',  # noqa: E501
+        "get_device_id_fallback": "None",
+        "set_device": None,  # JAX handles device at array creation
+        "move_to_device": '{mod}.device_put(data, {mod}.devices("gpu")[device_id])',
         # Stack operations
-        'allocate_stack': 'jnp.empty(stack_shape, dtype=first_slice.dtype)',
-        'allocate_context': None,
-        'needs_dtype_conversion': False,
-        'assign_slice': _jax_assign_slice,  # Custom handler for immutability
-        'stack_handler': None,  # Standard
-
+        "allocate_stack": "jnp.empty(stack_shape, dtype=first_slice.dtype)",
+        "allocate_context": None,
+        "needs_dtype_conversion": False,
+        "assign_slice": _jax_assign_slice,  # Custom handler for immutability
+        "stack_handler": None,  # Standard
         # Dtype scaling
-        'scaling_ops': {
-            'min': 'jnp.min(result)',
-            'max': 'jnp.max(result)',
-            'astype': 'result.astype(target_dtype_mapped)',
-            'check_float': 'result.dtype in [jnp.float16, jnp.float32, jnp.float64]',
-            'check_int': 'target_dtype_mapped in [jnp.uint8, jnp.int8, jnp.int16, jnp.int32, jnp.int64]',  # noqa: E501
-            'needs_dtype_map': True,
-            'extra_import': 'jax.numpy',
-            'clamp': 'jnp.clip(result, min_val, max_val)',
+        "scaling_ops": {
+            "min": "jnp.min(result)",
+            "max": "jnp.max(result)",
+            "astype": "result.astype(target_dtype_mapped)",
+            "check_float": "result.dtype in [jnp.float16, jnp.float32, jnp.float64]",
+            "check_int": "target_dtype_mapped in [jnp.uint8, jnp.int8, jnp.int16, jnp.int32, jnp.int64]",  # noqa: E501
+            "needs_dtype_map": True,
+            "extra_import": "jax.numpy",
+            "clamp": "jnp.clip(result, min_val, max_val)",
         },
-
         # Conversion operations
-        'conversion_ops': {
-            'to_numpy': 'np.asarray(data)',
-            'from_numpy': '{mod}.device_put(data, {mod}.devices()[gpu_id])',
-            'from_dlpack': '{mod}.dlpack.from_dlpack(data)',
-            'move_to_device': 'data',
+        "conversion_ops": {
+            "to_numpy": "np.asarray(data)",
+            "from_numpy": "{mod}.device_put(data, {mod}.devices()[gpu_id])",
+            "from_dlpack": "{mod}.dlpack.from_dlpack(data)",
+            "move_to_device": "data",
         },
-
         # DLPack
-        'supports_dlpack': True,
-        'validate_dlpack': None,
-
+        "supports_dlpack": True,
+        "validate_dlpack": None,
         # GPU/Cleanup
-        'lazy_getter': '_get_jax',
-        'gpu_check': '{mod} is not None and any(d.platform == "gpu" for d in {mod}.devices())',
-        'stream_context': None,  # JAX/XLA manages streams internally
-        'device_context': '{mod}.default_device([d for d in {mod}.devices() if d.platform == "gpu"][0])',  # noqa: E501
-        'cleanup_ops': '{mod}.clear_caches()',
-        'has_oom_recovery': True,
-        'oom_exception_types': [],
-        'oom_string_patterns': ['out of memory', 'oom when allocating', 'allocation failure'],
-        'oom_clear_cache': '{mod}.clear_caches()',
+        "lazy_getter": "_get_jax",
+        "gpu_check": '{mod} is not None and any(d.platform == "gpu" for d in {mod}.devices())',
+        "stream_context": None,  # JAX/XLA manages streams internally
+        "device_context": '{mod}.default_device([d for d in {mod}.devices() if d.platform == "gpu"][0])',  # noqa: E501
+        "cleanup_ops": "{mod}.clear_caches()",
+        "has_oom_recovery": True,
+        "oom_exception_types": [],
+        "oom_string_patterns": ["out of memory", "oom when allocating", "allocation failure"],
+        "oom_clear_cache": "{mod}.clear_caches()",
     },
-
     MemoryType.PYCLESPERANTO: {
         # Metadata
-        'import_name': 'pyclesperanto',
-        'display_name': 'pyclesperanto',
-        'is_gpu': True,
-
+        "import_name": "pyclesperanto",
+        "display_name": "pyclesperanto",
+        "is_gpu": True,
         # Device operations (custom handlers)
-        'get_device_id': _pyclesperanto_get_device_id,  # Callable
-        'get_device_id_fallback': '0',
-        'set_device': _pyclesperanto_set_device,  # Callable
-        'move_to_device': _pyclesperanto_move_to_device,  # Callable
-
+        "get_device_id": _pyclesperanto_get_device_id,  # Callable
+        "get_device_id_fallback": "0",
+        "set_device": _pyclesperanto_set_device,  # Callable
+        "move_to_device": _pyclesperanto_move_to_device,  # Callable
         # Stack operations (custom handler)
-        'allocate_stack': None,  # Uses concatenate_along_z
-        'allocate_context': None,
-        'needs_dtype_conversion': False,
-        'assign_slice': None,  # Not used (custom stacking)
-        'stack_handler': _pyclesperanto_stack_slices,  # Custom stacking
-
+        "allocate_stack": None,  # Uses concatenate_along_z
+        "allocate_context": None,
+        "needs_dtype_conversion": False,
+        "assign_slice": None,  # Not used (custom stacking)
+        "stack_handler": _pyclesperanto_stack_slices,  # Custom stacking
         # Conversion operations
-        'conversion_ops': {
-            'to_numpy': '{mod}.pull(data)',
-            'from_numpy': '{mod}.push(data)',
-            'from_dlpack': None,
-            'move_to_device': 'data',
+        "conversion_ops": {
+            "to_numpy": "{mod}.pull(data)",
+            "from_numpy": "{mod}.push(data)",
+            "from_dlpack": None,
+            "move_to_device": "data",
         },
-
         # Dtype scaling (custom implementation in dtype_scaling.py)
-        'scaling_ops': None,  # Custom _scale_pyclesperanto function
-
+        "scaling_ops": None,  # Custom _scale_pyclesperanto function
         # DLPack
-        'supports_dlpack': False,
-        'validate_dlpack': None,
-
+        "supports_dlpack": False,
+        "validate_dlpack": None,
         # GPU/Cleanup
-        'lazy_getter': None,
-        'gpu_check': None,  # pyclesperanto always uses GPU if available
-        'stream_context': None,  # OpenCL manages streams internally
-        'device_context': None,  # OpenCL device selection is global
-        'cleanup_ops': None,  # pyclesperanto/OpenCL has no explicit cache clearing API
-        'has_oom_recovery': True,
-        'oom_exception_types': [],
-        'oom_string_patterns': ['cl_mem_object_allocation_failure', 'cl_out_of_resources', 'out of memory'],  # noqa: E501
-        'oom_clear_cache': None,  # pyclesperanto/OpenCL has no explicit cache clearing API
+        "lazy_getter": None,
+        "gpu_check": None,  # pyclesperanto always uses GPU if available
+        "stream_context": None,  # OpenCL manages streams internally
+        "device_context": None,  # OpenCL device selection is global
+        "cleanup_ops": None,  # pyclesperanto/OpenCL has no explicit cache clearing API
+        "has_oom_recovery": True,
+        "oom_exception_types": [],
+        "oom_string_patterns": [
+            "cl_mem_object_allocation_failure",
+            "cl_out_of_resources",
+            "out of memory",
+        ],  # noqa: E501
+        "oom_clear_cache": None,  # pyclesperanto/OpenCL has no explicit cache clearing API
     },
 }
-

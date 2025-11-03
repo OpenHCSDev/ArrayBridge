@@ -17,11 +17,13 @@ from .framework_config import _FRAMEWORK_CONFIG
 
 logger = logging.getLogger(__name__)
 
+
 class _ModulePlaceholder:
     """
     Placeholder for missing optional modules that allows attribute access
     for type annotations while still being falsy and failing on actual use.
     """
+
     def __init__(self, module_name: str):
         self._module_name = module_name
 
@@ -99,14 +101,14 @@ def _ensure_module(module_name: str) -> Any:
         module = importlib.import_module(module_name)
     except ImportError:
         raise ImportError(
-            f"Module {module_name} is required for this operation "
-            f"but is not installed"
+            f"Module {module_name} is required for this operation " f"but is not installed"
         )
 
     # Check TensorFlow version for DLPack compatibility
     if module_name == "tensorflow":
         try:
             from packaging import version
+
             tf_version = version.parse(module.__version__)
             min_version = version.parse("2.12.0")
 
@@ -120,9 +122,7 @@ def _ensure_module(module_name: str) -> Any:
             # Fallback: simple string comparison if packaging not available
             try:
                 tf_parts = [int(x) for x in module.__version__.split(".")[:3]]
-                if (tf_parts[0] < 2) or (
-                    tf_parts[0] == 2 and tf_parts[1] < 12
-                ):
+                if (tf_parts[0] < 2) or (tf_parts[0] == 2 and tf_parts[1] < 12):
                     raise RuntimeError(
                         f"TensorFlow version {module.__version__} is not supported "
                         f"for DLPack operations. "
@@ -169,13 +169,13 @@ def _supports_dlpack(obj: Any) -> bool:
     # PyTorch: __dlpack__ method, CuPy: toDlpack method, JAX: __dlpack__ method
     if hasattr(obj, "toDlpack") or hasattr(obj, "to_dlpack") or hasattr(obj, "__dlpack__"):
         # Special handling for TensorFlow to enforce Clause 88
-        if 'tensorflow' in str(type(obj)):
+        if "tensorflow" in str(type(obj)):
             try:
                 import tensorflow as tf
 
                 # Check TensorFlow version - DLPack is only stable in TF 2.12+
                 tf_version = tf.__version__
-                major, minor = map(int, tf_version.split('.')[:2])
+                major, minor = map(int, tf_version.split(".")[:2])
 
                 if major < 2 or (major == 2 and minor < 12):
                     # Explicitly fail for TF < 2.12 to prevent silent fallbacks
@@ -239,7 +239,7 @@ def _get_device_id(data: Any, memory_type: str) -> Optional[int]:
     # Convert string to enum
     mem_type = MemoryType(memory_type)
     config = _FRAMEWORK_CONFIG[mem_type]
-    get_id_handler = config['get_device_id']
+    get_id_handler = config["get_device_id"]
 
     # Check if it's a callable handler (pyclesperanto)
     if callable(get_id_handler):
@@ -257,8 +257,8 @@ def _get_device_id(data: Any, memory_type: str) -> Optional[int]:
     except (AttributeError, Exception) as e:
         logger.warning(f"Failed to get device ID for {mem_type.value} array: {e}")
         # Try fallback if available
-        if 'get_device_id_fallback' in config:
-            return eval(config['get_device_id_fallback'])
+        if "get_device_id_fallback" in config:
+            return eval(config["get_device_id_fallback"])
 
 
 def _set_device(memory_type: str, device_id: int) -> None:
@@ -275,7 +275,7 @@ def _set_device(memory_type: str, device_id: int) -> None:
     # Convert string to enum
     mem_type = MemoryType(memory_type)
     config = _FRAMEWORK_CONFIG[mem_type]
-    set_device_handler = config['set_device']
+    set_device_handler = config["set_device"]
 
     # Check if it's a callable handler (pyclesperanto)
     if callable(set_device_handler):
@@ -287,7 +287,7 @@ def _set_device(memory_type: str, device_id: int) -> None:
                 source_type=memory_type,
                 target_type=memory_type,
                 method="device_selection",
-                reason=f"Failed to set {mem_type.value} device to {device_id}: {e}"
+                reason=f"Failed to set {mem_type.value} device to {device_id}: {e}",
             ) from e
         return
 
@@ -298,13 +298,13 @@ def _set_device(memory_type: str, device_id: int) -> None:
     # It's an eval expression
     try:
         mod = _ensure_module(mem_type.value)  # noqa: F841 (used in eval)
-        eval(set_device_handler.format(mod='mod'))
+        eval(set_device_handler.format(mod="mod"))
     except Exception as e:
         raise MemoryConversionError(
             source_type=memory_type,
             target_type=memory_type,
             method="device_selection",
-            reason=f"Failed to set {mem_type.value} device to {device_id}: {e}"
+            reason=f"Failed to set {mem_type.value} device to {device_id}: {e}",
         ) from e
 
 
@@ -326,7 +326,7 @@ def _move_to_device(data: Any, memory_type: str, device_id: int) -> Any:
     # Convert string to enum
     mem_type = MemoryType(memory_type)
     config = _FRAMEWORK_CONFIG[mem_type]
-    move_handler = config['move_to_device']
+    move_handler = config["move_to_device"]
 
     # Check if it's a callable handler (pyclesperanto)
     if callable(move_handler):
@@ -338,7 +338,7 @@ def _move_to_device(data: Any, memory_type: str, device_id: int) -> Any:
                 source_type=memory_type,
                 target_type=memory_type,
                 method="device_movement",
-                reason=f"Failed to move {mem_type.value} array to device {device_id}: {e}"
+                reason=f"Failed to move {mem_type.value} array to device {device_id}: {e}",
             ) from e
 
     # Check if it's None (CPU memory types)
@@ -350,17 +350,17 @@ def _move_to_device(data: Any, memory_type: str, device_id: int) -> Any:
         mod = _ensure_module(mem_type.value)  # noqa: F841 (used in eval)
 
         # Handle context managers (CuPy, TensorFlow)
-        if 'move_context' in config and config['move_context']:
-            context_expr = config['move_context'].format(mod='mod')
+        if "move_context" in config and config["move_context"]:
+            context_expr = config["move_context"].format(mod="mod")
             context = eval(context_expr)
             with context:
-                return eval(move_handler.format(mod='mod'))
+                return eval(move_handler.format(mod="mod"))
         else:
-            return eval(move_handler.format(mod='mod'))
+            return eval(move_handler.format(mod="mod"))
     except Exception as e:
         raise MemoryConversionError(
             source_type=memory_type,
             target_type=memory_type,
             method="device_movement",
-            reason=f"Failed to move {mem_type.value} array to device {device_id}: {e}"
+            reason=f"Failed to move {mem_type.value} array to device {device_id}: {e}",
         ) from e

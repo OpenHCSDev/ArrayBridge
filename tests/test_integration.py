@@ -98,6 +98,7 @@ class TestFrameworkAvailability:
     def test_numpy_always_available(self):
         """Test that NumPy is always available."""
         import numpy
+
         assert numpy is not None
 
     def test_optional_framework_import(self):

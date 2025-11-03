@@ -18,11 +18,6 @@ from arraybridge.types import MemoryType
 logger = logging.getLogger(__name__)
 
 
-
-
-
-
-
 def _create_cleanup_function(mem_type: MemoryType):
     """
     Factory function that creates a cleanup function for a specific memory type.
@@ -30,11 +25,12 @@ def _create_cleanup_function(mem_type: MemoryType):
     This single factory replaces 6 nearly-identical cleanup functions.
     """
     config = _FRAMEWORK_CONFIG[mem_type]
-    framework_name = config['import_name']
-    display_name = config['display_name']
+    framework_name = config["import_name"]
+    display_name = config["display_name"]
 
     # CPU memory type - no cleanup needed
-    if config['cleanup_ops'] is None:
+    if config["cleanup_ops"] is None:
+
         def cleanup(device_id: Optional[int] = None) -> None:
             """No-op cleanup for CPU memory type."""
             logger.debug(f"🔥 GPU CLEANUP: No-op for {display_name} (CPU memory type)")
@@ -59,7 +55,7 @@ def _create_cleanup_function(mem_type: MemoryType):
 
         try:
             # Check GPU availability
-            gpu_check_expr = config['gpu_check'].format(mod=framework_name)
+            gpu_check_expr = config["gpu_check"].format(mod=framework_name)
             try:
                 gpu_available = eval(gpu_check_expr, {framework_name: framework})
             except Exception:
@@ -69,23 +65,23 @@ def _create_cleanup_function(mem_type: MemoryType):
                 return
 
             # Execute cleanup operations
-            if device_id is not None and config['device_context'] is not None:
+            if device_id is not None and config["device_context"] is not None:
                 # Clean specific device with context
-                device_ctx_expr = config['device_context'].format(
+                device_ctx_expr = config["device_context"].format(
                     device_id=device_id, mod=framework_name
                 )
                 device_ctx = eval(device_ctx_expr, {framework_name: framework})
 
                 with device_ctx:
                     # Execute cleanup operations
-                    cleanup_expr = config['cleanup_ops'].format(mod=framework_name)
-                    exec(cleanup_expr, {framework_name: framework, 'gc': gc})
+                    cleanup_expr = config["cleanup_ops"].format(mod=framework_name)
+                    exec(cleanup_expr, {framework_name: framework, "gc": gc})
 
                 logger.debug(f"🔥 GPU CLEANUP: Cleared {display_name} for device {device_id}")
             else:
                 # Clean all devices (no device context)
-                cleanup_expr = config['cleanup_ops'].format(mod=framework_name)
-                exec(cleanup_expr, {framework_name: framework, 'gc': gc})
+                cleanup_expr = config["cleanup_ops"].format(mod=framework_name)
+                exec(cleanup_expr, {framework_name: framework, "gc": gc})
                 logger.debug(f"🔥 GPU CLEANUP: Cleared {display_name} for all devices")
 
         except Exception as e:
@@ -125,25 +121,21 @@ def cleanup_all_gpu_frameworks(device_id: Optional[int] = None) -> None:
 
     # Only cleanup GPU memory types (those with cleanup operations)
     for mem_type, config in _FRAMEWORK_CONFIG.items():
-        if config['cleanup_ops'] is not None:
+        if config["cleanup_ops"] is not None:
             cleanup_func = MEMORY_TYPE_CLEANUP_REGISTRY[mem_type.value]
             cleanup_func(device_id)
 
     logger.debug("🔥 GPU CLEANUP: Completed cleanup for all GPU frameworks")
 
 
-
-
-
 # Export all cleanup functions and utilities
 __all__ = [
-    'cleanup_all_gpu_frameworks',
-    'MEMORY_TYPE_CLEANUP_REGISTRY',
-    'cleanup_numpy_gpu',  # noqa: F822
-    'cleanup_cupy_gpu',  # noqa: F822
-    'cleanup_torch_gpu',  # noqa: F822
-    'cleanup_tensorflow_gpu',  # noqa: F822
-    'cleanup_jax_gpu',  # noqa: F822
-    'cleanup_pyclesperanto_gpu',  # noqa: F822
+    "cleanup_all_gpu_frameworks",
+    "MEMORY_TYPE_CLEANUP_REGISTRY",
+    "cleanup_numpy_gpu",  # noqa: F822
+    "cleanup_cupy_gpu",  # noqa: F822
+    "cleanup_torch_gpu",  # noqa: F822
+    "cleanup_tensorflow_gpu",  # noqa: F822
+    "cleanup_jax_gpu",  # noqa: F822
+    "cleanup_pyclesperanto_gpu",  # noqa: F822
 ]
-

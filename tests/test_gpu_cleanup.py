@@ -2,11 +2,9 @@
 
 import pytest
 
-from arraybridge.gpu_cleanup import (
-    cleanup_all_gpu_frameworks,
-    MEMORY_TYPE_CLEANUP_REGISTRY
-)
+from arraybridge.gpu_cleanup import cleanup_all_gpu_frameworks, MEMORY_TYPE_CLEANUP_REGISTRY
 from arraybridge.types import MemoryType
+
 
 class TestCleanupRegistry:
     """Tests for cleanup registry."""
@@ -23,12 +21,12 @@ class TestCleanupRegistry:
 
         # Check that cleanup functions exist
         expected_functions = [
-            'cleanup_numpy_gpu',
-            'cleanup_cupy_gpu',
-            'cleanup_torch_gpu',
-            'cleanup_tensorflow_gpu',
-            'cleanup_jax_gpu',
-            'cleanup_pyclesperanto_gpu'
+            "cleanup_numpy_gpu",
+            "cleanup_cupy_gpu",
+            "cleanup_torch_gpu",
+            "cleanup_tensorflow_gpu",
+            "cleanup_jax_gpu",
+            "cleanup_pyclesperanto_gpu",
         ]
 
         for func_name in expected_functions:
@@ -68,7 +66,7 @@ class TestIndividualCleanupFunctions:
             assert gpu_array.device.id >= 0  # Ensure we have GPU memory
 
             # Mock the GPU check to return True so cleanup code runs
-            with unittest.mock.patch('arraybridge.gpu_cleanup.eval') as mock_eval:
+            with unittest.mock.patch("arraybridge.gpu_cleanup.eval") as mock_eval:
                 mock_eval.return_value = True  # GPU is available
                 # Cleanup should work without errors
                 cleanup_cupy_gpu()
@@ -88,16 +86,17 @@ class TestIndividualCleanupFunctions:
     def test_torch_cleanup_with_gpu(self):
         """Test torch cleanup when torch and GPU are available."""
         import unittest.mock
+
         torch = pytest.importorskip("torch")
         from arraybridge.gpu_cleanup import cleanup_torch_gpu
 
         # Create some GPU memory to cleanup
         try:
-            gpu_tensor = torch.zeros((100, 100), device='cuda')
-            assert gpu_tensor.device.type == 'cuda'
+            gpu_tensor = torch.zeros((100, 100), device="cuda")
+            assert gpu_tensor.device.type == "cuda"
 
             # Mock the GPU check to return True so cleanup code runs
-            with unittest.mock.patch('arraybridge.gpu_cleanup.eval') as mock_eval:
+            with unittest.mock.patch("arraybridge.gpu_cleanup.eval") as mock_eval:
                 mock_eval.return_value = True  # GPU is available
                 # Cleanup should work without errors
                 cleanup_torch_gpu()
@@ -117,17 +116,18 @@ class TestIndividualCleanupFunctions:
     def test_tensorflow_cleanup_with_gpu(self):
         """Test tensorflow cleanup when tensorflow and GPU are available."""
         import unittest.mock
+
         tf = pytest.importorskip("tensorflow")
         from arraybridge.gpu_cleanup import cleanup_tensorflow_gpu
 
         # Create some GPU memory to cleanup
         try:
-            with tf.device('/GPU:0'):
+            with tf.device("/GPU:0"):
                 gpu_tensor = tf.zeros((100, 100))
-                assert 'GPU' in gpu_tensor.device
+                assert "GPU" in gpu_tensor.device
 
             # Mock the GPU check to return True so cleanup code runs
-            with unittest.mock.patch('arraybridge.gpu_cleanup.eval') as mock_eval:
+            with unittest.mock.patch("arraybridge.gpu_cleanup.eval") as mock_eval:
                 mock_eval.return_value = True  # GPU is available
                 # Cleanup should work without errors
                 cleanup_tensorflow_gpu()
@@ -147,6 +147,7 @@ class TestIndividualCleanupFunctions:
     def test_jax_cleanup_with_gpu(self):
         """Test jax cleanup when jax and GPU are available."""
         import unittest.mock
+
         jax = pytest.importorskip("jax")
         jnp = jax.numpy
         from arraybridge.gpu_cleanup import cleanup_jax_gpu
@@ -157,7 +158,7 @@ class TestIndividualCleanupFunctions:
             # JAX arrays are typically on CPU by default, but cleanup should still work
 
             # Mock the GPU check to return True so cleanup code runs
-            with unittest.mock.patch('arraybridge.gpu_cleanup.eval') as mock_eval:
+            with unittest.mock.patch("arraybridge.gpu_cleanup.eval") as mock_eval:
                 mock_eval.return_value = True  # GPU is available
                 cleanup_jax_gpu()
                 cleanup_jax_gpu(device_id=0)
@@ -176,6 +177,7 @@ class TestIndividualCleanupFunctions:
     def test_pyclesperanto_cleanup_with_gpu(self):
         """Test pyclesperanto cleanup when pyclesperanto and GPU are available."""
         import unittest.mock
+
         cle = pytest.importorskip("pyclesperanto")
         from arraybridge.gpu_cleanup import cleanup_pyclesperanto_gpu
 
@@ -183,7 +185,7 @@ class TestIndividualCleanupFunctions:
         try:
             gpu_array = cle.create((100, 100))
             # Mock the GPU check to return True so cleanup code runs
-            with unittest.mock.patch('arraybridge.gpu_cleanup.eval') as mock_eval:
+            with unittest.mock.patch("arraybridge.gpu_cleanup.eval") as mock_eval:
                 mock_eval.return_value = True  # GPU is available
                 # Cleanup should work without errors
                 cleanup_pyclesperanto_gpu()
@@ -215,27 +217,19 @@ class TestCleanupFunctionSignatures:
         """Test that cleanup functions have correct signatures."""
         import inspect
 
-        from arraybridge.gpu_cleanup import (
-            cleanup_numpy_gpu,
-            cleanup_cupy_gpu,
-            cleanup_torch_gpu
-        )
+        from arraybridge.gpu_cleanup import cleanup_numpy_gpu, cleanup_cupy_gpu, cleanup_torch_gpu
 
         for func in [cleanup_numpy_gpu, cleanup_cupy_gpu, cleanup_torch_gpu]:
             sig = inspect.signature(func)
-            assert 'device_id' in sig.parameters
+            assert "device_id" in sig.parameters
 
             # device_id should be optional
-            param = sig.parameters['device_id']
+            param = sig.parameters["device_id"]
             assert param.default is None
 
     def test_cleanup_function_docstrings(self):
         """Test that cleanup functions have docstrings."""
-        from arraybridge.gpu_cleanup import (
-            cleanup_numpy_gpu,
-            cleanup_cupy_gpu,
-            cleanup_torch_gpu
-        )
+        from arraybridge.gpu_cleanup import cleanup_numpy_gpu, cleanup_cupy_gpu, cleanup_torch_gpu
 
         for func in [cleanup_numpy_gpu, cleanup_cupy_gpu, cleanup_torch_gpu]:
             assert func.__doc__ is not None
@@ -244,4 +238,6 @@ class TestCleanupFunctionSignatures:
     def test_cleanup_all_docstring(self):
         """Test cleanup_all_gpu_frameworks has proper docstring."""
         assert cleanup_all_gpu_frameworks.__doc__ is not None
-        assert 'Clean up GPU memory for all available frameworks' in cleanup_all_gpu_frameworks.__doc__
+        assert (
+            "Clean up GPU memory for all available frameworks" in cleanup_all_gpu_frameworks.__doc__
+        )

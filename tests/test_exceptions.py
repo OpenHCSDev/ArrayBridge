@@ -13,7 +13,7 @@ class TestMemoryConversionError:
             source_type="numpy",
             target_type="torch",
             method="dlpack",
-            reason="Framework not installed"
+            reason="Framework not installed",
         )
 
         assert error.source_type == "numpy"
@@ -27,7 +27,7 @@ class TestMemoryConversionError:
             source_type="numpy",
             target_type="cupy",
             method="array_interface",
-            reason="CUDA not available"
+            reason="CUDA not available",
         )
 
         error_message = str(error)
@@ -43,7 +43,7 @@ class TestMemoryConversionError:
                 source_type="torch",
                 target_type="tensorflow",
                 method="dlpack",
-                reason="Incompatible versions"
+                reason="Incompatible versions",
             )
 
         assert exc_info.value.source_type == "torch"
@@ -52,10 +52,7 @@ class TestMemoryConversionError:
     def test_exception_inheritance(self):
         """Test that MemoryConversionError inherits from Exception."""
         error = MemoryConversionError(
-            source_type="jax",
-            target_type="numpy",
-            method="numpy_conversion",
-            reason="Test error"
+            source_type="jax", target_type="numpy", method="numpy_conversion", reason="Test error"
         )
 
         assert isinstance(error, Exception)

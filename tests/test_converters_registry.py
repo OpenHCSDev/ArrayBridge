@@ -14,9 +14,9 @@ class TestConverterRegistry:
         expected_types = {mt.value for mt in MemoryType}
         registered_types = set(ConverterBase.__registry__.keys())
 
-        assert expected_types == registered_types, (
-            f"Registry mismatch. Expected: {expected_types}, Got: {registered_types}"
-        )
+        assert (
+            expected_types == registered_types
+        ), f"Registry mismatch. Expected: {expected_types}, Got: {registered_types}"
 
     def test_get_converter_returns_valid_converter(self):
         """Test that get_converter returns a valid converter instance."""
@@ -102,9 +102,7 @@ class TestConverterRegistry:
         # Check that it has to_X() methods for all memory types
         for target_type in MemoryType:
             method_name = f"to_{target_type.value}"
-            assert hasattr(numpy_converter, method_name), (
-                f"Converter missing method: {method_name}"
-            )
+            assert hasattr(numpy_converter, method_name), f"Converter missing method: {method_name}"
 
     def test_converter_classes_registered_with_correct_names(self):
         """Test that converter classes are registered with expected names."""

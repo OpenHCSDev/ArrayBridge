@@ -36,6 +36,7 @@ class TestDetectMemoryType:
             pytest.skip("PyTorch not available")
 
         import torch
+
         tensor = torch.tensor([1, 2, 3])
         detected = detect_memory_type(tensor)
         assert detected == "torch"
@@ -95,6 +96,7 @@ class TestConvertMemory:
             pytest.skip("PyTorch not available")
 
         import torch
+
         arr = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         result = convert_memory(arr, source_type="numpy", target_type="torch", gpu_id=0)
 
@@ -108,6 +110,7 @@ class TestConvertMemory:
             pytest.skip("PyTorch not available")
 
         import torch
+
         tensor = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
         result = convert_memory(tensor, source_type="torch", target_type="numpy", gpu_id=0)
 

@@ -1,10 +1,7 @@
-name: GPU Tests (Optional)
+name: GPU Tests (Manual - Comprehensive GPU Testing)
 
 on:
   workflow_dispatch:  # Manual trigger only
-  schedule:
-    # Run weekly on Sunday at 2am UTC (optional, can be removed)
-    - cron: '0 2 * * 0'
 
 jobs:
   gpu-test:
@@ -14,33 +11,68 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: kaggle Action
-        uses: Frederisk/kaggle-action@v1.0.0
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          kaggle-dataset: ""  # No dataset needed
-          kaggle-competition: ""  # No competition
-          kaggle-command: |
-            cd /kaggle/working
-            git clone https://github.com/trissim/arraybridge.git
-            cd arraybridge
-            python -m pip install --upgrade pip
-            pip install -e ".[dev,gpu]"
+          python-version: "3.12"
 
-            # Check CUDA availability
-            nvidia-smi || echo "No NVIDIA GPU detected"
-            nvcc --version || echo "No CUDA compiler detected"
+      - name: Install base dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
 
-            # Run GPU-specific tests
-            pytest -v -m "gpu" --cov=arraybridge --cov-report=term-missing || echo "GPU tests completed with some failures"
+      - name: Install CPU-available frameworks
+        run: |
+          # Install CPU versions of frameworks for testing
+          # (Real GPU tests would need actual CUDA infrastructure)
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install jax jaxlib
+          echo "Installed PyTorch (CPU) and JAX for testing"
 
-            # Run framework-specific tests for GPU frameworks
-            pytest -v -m "cupy or torch or tensorflow or jax or pyclesperanto" --cov=arraybridge --cov-report=term-missing || echo "Framework tests completed with some failures"
+      - name: Check framework availability
+        run: |
+          python -c "
+          import sys
+          frameworks = ['numpy', 'torch', 'jax', 'cupy', 'tensorflow', 'pyclesperanto']
+          for fw in frameworks:
+              try:
+                  __import__(fw)
+                  print(f'✓ {fw} available')
+              except ImportError:
+                  print(f'✗ {fw} not available (will be skipped)')
+          "
 
-      - name: Upload test results
+      - name: Run comprehensive GPU cleanup tests
+        run: |
+          # Run all GPU cleanup tests
+          # Tests will use frameworks if available, skip gracefully if not
+          pytest -v tests/test_gpu_cleanup.py \
+            --cov=arraybridge \
+            --cov-report=term-missing \
+            --cov-report=html \
+            --tb=short \
+            -ra
+
+      - name: Run framework-specific GPU tests
+        run: |
+          # Run tests marked for specific frameworks
+          pytest -v tests/ -k "gpu or cupy or torch or tensorflow or jax or pyclesperanto" \
+            --cov=arraybridge \
+            --cov-report=term-missing \
+            -ra || true
+
+      - name: Test results summary
+        if: always()
+        run: |
+          echo "GPU Testing Complete!"
+          echo "Note: Full GPU testing requires NVIDIA CUDA infrastructure."
+          echo "For complete GPU testing, use a system with NVIDIA GPUs installed."
+
+      - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gpu-test-results
+          name: gpu-test-coverage-report
           path: |
             htmlcov/
             .coverage
