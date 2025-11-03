@@ -56,7 +56,7 @@ def _ensure_module(memory_type: str):
 
 def _make_lambda_with_name(expr_str, mem_type, method_name):
     """Create a lambda from expression string and add proper __name__ for debugging.
-    
+
     Note: Uses eval() for dynamic code generation from trusted framework_config.py strings.
     This is safe because:
     1. Input strings come from _FRAMEWORK_CONFIG, not user input
@@ -84,29 +84,29 @@ def _make_not_implemented(mem_type_value, method_name):
 def _create_converter_classes():
     """Create concrete converter classes for each memory type."""
     converters = {}
-    
+
     for mem_type in MemoryType:
         config = _FRAMEWORK_CONFIG[mem_type]
         conversion_ops = config['conversion_ops']
-        
+
         # Build class attributes
         class_attrs = {
             'memory_type': mem_type.value,
         }
-        
+
         # Add conversion methods
         for method_name, expr in conversion_ops.items():
             if expr is None:
                 class_attrs[method_name] = _make_not_implemented(mem_type.value, method_name)
             else:
                 class_attrs[method_name] = _make_lambda_with_name(expr, mem_type, method_name)
-        
+
         # Create the class
         class_name = f"{mem_type.value.capitalize()}Converter"
         converter_class = type(class_name, (ConverterBase,), class_attrs)
-        
+
         converters[mem_type] = converter_class
-    
+
     return converters
 
 
@@ -142,7 +142,7 @@ def _add_converter_methods():
     that tries GPU-to-GPU conversion via DLPack first, then falls back to CPU roundtrip.
     """
     from arraybridge.utils import _supports_dlpack
-    
+
     for target_type in MemoryType:
         method_name = f"to_{target_type.value}"
 
@@ -170,7 +170,7 @@ def _validate_registry():
     """Validate that all memory types are registered."""
     required_types = {mt.value for mt in MemoryType}
     registered_types = set(ConverterBase.__registry__.keys())
-    
+
     if required_types != registered_types:
         missing = required_types - registered_types
         extra = registered_types - required_types
@@ -182,7 +182,7 @@ def _validate_registry():
         raise RuntimeError(
             f"Registry validation failed. {', '.join(msg_parts)}"
         )
-    
+
     logger.debug(
         f"✅ Validated {len(registered_types)} memory type converters in registry"
     )

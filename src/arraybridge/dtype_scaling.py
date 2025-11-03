@@ -57,13 +57,22 @@ def _scale_generic(result, target_dtype, mem_type: MemoryType):
     target_dtype_mapped = target_dtype  # noqa: F841 (used in eval)
     if ops.get('needs_dtype_map'):
         # Use jnp for JAX, mod for others
-        dtype_module = jnp if 'extra_import' in ops and jnp is not None else mod
+        dtype_module = (
+            jnp if 'extra_import' in ops and jnp is not None else mod
+        )
         dtype_map = {
-            np.uint8: dtype_module.uint8, np.int8: dtype_module.int8, np.int16: dtype_module.int16,
-            np.int32: dtype_module.int32, np.int64: dtype_module.int64, np.float16: dtype_module.float16,
-            np.float32: dtype_module.float32, np.float64: dtype_module.float64,
+            np.uint8: dtype_module.uint8,
+            np.int8: dtype_module.int8,
+            np.int16: dtype_module.int16,
+            np.int32: dtype_module.int32,
+            np.int64: dtype_module.int64,
+            np.float16: dtype_module.float16,
+            np.float32: dtype_module.float32,
+            np.float64: dtype_module.float64,
         }
-        target_dtype_mapped = dtype_map.get(target_dtype, dtype_module.float32)  # noqa: F841
+        target_dtype_mapped = dtype_map.get(  # noqa: F841
+            target_dtype, dtype_module.float32
+        )
 
     # Check if conversion needed (float → int)
     result_is_float = eval(ops['check_float'])
