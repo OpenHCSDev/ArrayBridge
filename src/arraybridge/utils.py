@@ -97,28 +97,42 @@ def _ensure_module(module_name: str) -> Any:
     """
     try:
         module = importlib.import_module(module_name)
-
-        # Check TensorFlow version for DLPack compatibility
-        if module_name == "tensorflow":
-            import pkg_resources
-            tf_version = pkg_resources.parse_version(module.__version__)
-            min_version = pkg_resources.parse_version("2.12.0")
-
-            if tf_version < min_version:
-                raise RuntimeError(
-                    f"TensorFlow version {module.__version__} is not supported "
-                    f"for DLPack operations. "
-                    f"Version 2.12.0 or higher is required for stable DLPack support. "
-                    f"Clause 88 (No Inferred Capabilities) violation: "
-                    f"Cannot infer DLPack capability."
-                )
-
-        return module
     except ImportError:
         raise ImportError(
             f"Module {module_name} is required for this operation "
             f"but is not installed"
         )
+
+    # Check TensorFlow version for DLPack compatibility
+    if module_name == "tensorflow":
+        try:
+            from packaging import version
+            tf_version = version.parse(module.__version__)
+            min_version = version.parse("2.12.0")
+            
+            if tf_version < min_version:
+                raise RuntimeError(
+                    f"TensorFlow version {module.__version__} is not supported "
+                    f"for DLPack operations. "
+                    f"Version 2.12.0 or higher is required for stable DLPack support."
+                )
+        except ImportError:
+            # Fallback: simple string comparison if packaging not available
+            try:
+                tf_parts = [int(x) for x in module.__version__.split(".")[:3]]
+                if (tf_parts[0] < 2) or (
+                    tf_parts[0] == 2 and tf_parts[1] < 12
+                ):
+                    raise RuntimeError(
+                        f"TensorFlow version {module.__version__} is not supported "
+                        f"for DLPack operations. "
+                        f"Version 2.12.0 or higher is required for stable DLPack support."
+                    )
+            except (ValueError, IndexError):
+                # If version parsing fails, assume it's ok
+                pass
+
+    return module
 
 
 def _supports_cuda_array_interface(obj: Any) -> bool:
