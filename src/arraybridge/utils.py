@@ -109,7 +109,7 @@ def _ensure_module(module_name: str) -> Any:
             from packaging import version
             tf_version = version.parse(module.__version__)
             min_version = version.parse("2.12.0")
-            
+
             if tf_version < min_version:
                 raise RuntimeError(
                     f"TensorFlow version {module.__version__} is not supported "
