@@ -8,7 +8,6 @@ from arraybridge.gpu_cleanup import (
 )
 from arraybridge.types import MemoryType
 
-
 class TestCleanupRegistry:
     """Tests for cleanup registry."""
 
@@ -57,10 +56,9 @@ class TestIndividualCleanupFunctions:
         cleanup_cupy_gpu()
         cleanup_cupy_gpu(device_id=0)
 
-    @pytest.mark.skipif(not hasattr(__import__('cupy', fromlist=['']), 'cuda'), reason="CuPy CUDA not available")
     def test_cupy_cleanup_with_gpu(self):
         """Test cupy cleanup when cupy and GPU are available."""
-        import cupy as cp
+        cp = pytest.importorskip("cupy")
         from arraybridge.gpu_cleanup import cleanup_cupy_gpu
         import unittest.mock
 
@@ -87,12 +85,11 @@ class TestIndividualCleanupFunctions:
         cleanup_torch_gpu()
         cleanup_torch_gpu(device_id=0)
 
-    @pytest.mark.skipif(not hasattr(__import__('torch', fromlist=['']), 'cuda'), reason="PyTorch CUDA not available")
     def test_torch_cleanup_with_gpu(self):
         """Test torch cleanup when torch and GPU are available."""
-        import torch
-        from arraybridge.gpu_cleanup import cleanup_torch_gpu
         import unittest.mock
+        torch = pytest.importorskip("torch")
+        from arraybridge.gpu_cleanup import cleanup_torch_gpu
 
         # Create some GPU memory to cleanup
         try:
@@ -117,12 +114,11 @@ class TestIndividualCleanupFunctions:
         cleanup_tensorflow_gpu()
         cleanup_tensorflow_gpu(device_id=0)
 
-    @pytest.mark.skipif(not hasattr(__import__('tensorflow', fromlist=['']), 'config'), reason="TensorFlow GPU not available")
     def test_tensorflow_cleanup_with_gpu(self):
         """Test tensorflow cleanup when tensorflow and GPU are available."""
-        import tensorflow as tf
-        from arraybridge.gpu_cleanup import cleanup_tensorflow_gpu
         import unittest.mock
+        tf = pytest.importorskip("tensorflow")
+        from arraybridge.gpu_cleanup import cleanup_tensorflow_gpu
 
         # Create some GPU memory to cleanup
         try:
@@ -148,12 +144,12 @@ class TestIndividualCleanupFunctions:
         cleanup_jax_gpu()
         cleanup_jax_gpu(device_id=0)
 
-    @pytest.mark.skipif(not hasattr(__import__('jax', fromlist=['']), 'numpy'), reason="JAX not available")
     def test_jax_cleanup_with_gpu(self):
         """Test jax cleanup when jax and GPU are available."""
-        import jax.numpy as jnp
-        from arraybridge.gpu_cleanup import cleanup_jax_gpu
         import unittest.mock
+        jax = pytest.importorskip("jax")
+        jnp = jax.numpy
+        from arraybridge.gpu_cleanup import cleanup_jax_gpu
 
         # Create some GPU memory to cleanup
         try:
@@ -177,12 +173,11 @@ class TestIndividualCleanupFunctions:
         cleanup_pyclesperanto_gpu()
         cleanup_pyclesperanto_gpu(device_id=0)
 
-    @pytest.mark.skipif(not hasattr(__import__('pyclesperanto', fromlist=['']), 'get_device'), reason="pyclesperanto not available")
     def test_pyclesperanto_cleanup_with_gpu(self):
         """Test pyclesperanto cleanup when pyclesperanto and GPU are available."""
-        import pyclesperanto as cle
-        from arraybridge.gpu_cleanup import cleanup_pyclesperanto_gpu
         import unittest.mock
+        cle = pytest.importorskip("pyclesperanto")
+        from arraybridge.gpu_cleanup import cleanup_pyclesperanto_gpu
 
         # Create some GPU memory to cleanup
         try:

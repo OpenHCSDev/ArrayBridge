@@ -1,7 +1,46 @@
 """Pytest configuration and fixtures for arraybridge tests."""
 
+import sys
 import pytest
 import numpy as np
+
+
+# Helper functions for safe module checking
+def _module_available(module_name):
+    """Check if a module is available without triggering ImportError."""
+    try:
+        __import__(module_name)
+        return True
+    except ImportError:
+        return False
+
+
+def _module_has_attribute(module_name, attribute):
+    """Check if a module is available and has an attribute."""
+    try:
+        module = __import__(module_name)
+        return hasattr(module, attribute)
+    except ImportError:
+        return False
+
+
+def _can_import_and_has_cuda(module_name):
+    """Check if module is available and has CUDA."""
+    try:
+        module = __import__(module_name)
+        if module_name == 'cupy':
+            return hasattr(module, 'cuda')
+        elif module_name == 'torch':
+            return hasattr(module, 'cuda')
+        elif module_name == 'tensorflow':
+            return hasattr(module, 'config')
+        elif module_name == 'jax':
+            return hasattr(module, 'numpy')
+        elif module_name == 'pyclesperanto':
+            return hasattr(module, 'get_device')
+        return False
+    except ImportError:
+        return False
 
 
 def pytest_configure(config):
