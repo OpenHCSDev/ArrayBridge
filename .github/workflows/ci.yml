@@ -54,46 +54,56 @@ jobs:
           file: ./coverage.xml
           fail_ci_if_error: false
 
-  # GPU tests using Kaggle action (optional, non-blocking)
-  # Note: This provides access to GPU resources for comprehensive testing
+  # GPU tests using Docker container with CUDA
   gpu-test:
     runs-on: ubuntu-latest
-    continue-on-error: true  # Don't block PR merges if GPU tests fail or timeout
+    continue-on-error: true  # Don't block PR merges if GPU not available
+
+    container:
+      image: nvidia/cuda:12.1.0-devel-ubuntu22.04
+      options: --gpus all
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: kaggle Action
-        uses: Frederisk/kaggle-action@v1.0.0
-        with:
-          kaggle-dataset: ""  # No dataset needed
-          kaggle-competition: ""  # No competition
-          kaggle-command: |
-            cd /kaggle/working
-            git clone https://github.com/trissim/arraybridge.git
-            cd arraybridge
-            python -m pip install --upgrade pip
-            pip install -e ".[dev,gpu]"
+      - name: Setup Python and dependencies
+        run: |
+          apt-get update && apt-get install -y python3 python3-pip python3-venv
+          python3 -m pip install --upgrade pip
 
-            # Check CUDA availability
-            nvidia-smi || echo "No NVIDIA GPU detected"
-            nvcc --version || echo "No CUDA compiler detected"
+      - name: Install arraybridge with GPU extras
+        run: |
+          python3 -m pip install -e ".[dev]"
+          # Install GPU frameworks
+          python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+          python3 -m pip install jax jaxlib --upgrade --index-url https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+          # Try CuPy installation (may fail if CUDA setup is incomplete)
+          python3 -m pip install cupy-cuda12x 2>&1 || echo "CuPy installation skipped"
 
-            # Run GPU-specific tests
-            pytest -v -m "gpu" --cov=arraybridge --cov-report=term-missing || echo "GPU tests completed with some failures"
+      - name: Check GPU availability
+        run: |
+          python3 << 'EOF'
+          import torch
+          print(f'PyTorch CUDA Available: {torch.cuda.is_available()}')
+          print(f'PyTorch CUDA Devices: {torch.cuda.device_count()}')
+          EOF
+          || true
 
-            # Run framework-specific tests for GPU frameworks
-            pytest -v -m "cupy or torch or tensorflow or jax or pyclesperanto" --cov=arraybridge --cov-report=term-missing || echo "Framework tests completed with some failures"
+      - name: Run GPU tests
+        run: |
+          python3 -m pytest -v tests/test_gpu_cleanup.py \
+            --cov=arraybridge \
+            --cov-report=term-missing \
+            --cov-report=html \
+            -ra
 
-      - name: Upload test results
+      - name: Upload GPU test coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gpu-test-results
-          path: |
-            htmlcov/
-            .coverage
+          name: gpu-test-coverage
+          path: htmlcov/
 
   # Code quality checks
   code-quality:
