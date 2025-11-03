@@ -2,7 +2,7 @@
 
 import pytest
 
-from arraybridge.gpu_cleanup import cleanup_all_gpu_frameworks, MEMORY_TYPE_CLEANUP_REGISTRY
+from arraybridge.gpu_cleanup import MEMORY_TYPE_CLEANUP_REGISTRY, cleanup_all_gpu_frameworks
 from arraybridge.types import MemoryType
 
 
@@ -57,8 +57,9 @@ class TestIndividualCleanupFunctions:
     def test_cupy_cleanup_with_gpu(self):
         """Test cupy cleanup when cupy and GPU are available."""
         cp = pytest.importorskip("cupy")
-        from arraybridge.gpu_cleanup import cleanup_cupy_gpu
         import unittest.mock
+
+        from arraybridge.gpu_cleanup import cleanup_cupy_gpu
 
         # Create some GPU memory to cleanup
         try:
@@ -154,7 +155,7 @@ class TestIndividualCleanupFunctions:
 
         # Create some GPU memory to cleanup
         try:
-            gpu_array = jnp.zeros((100, 100))
+            jnp.zeros((100, 100))
             # JAX arrays are typically on CPU by default, but cleanup should still work
 
             # Mock the GPU check to return True so cleanup code runs
@@ -183,7 +184,7 @@ class TestIndividualCleanupFunctions:
 
         # Create some GPU memory to cleanup
         try:
-            gpu_array = cle.create((100, 100))
+            cle.create((100, 100))
             # Mock the GPU check to return True so cleanup code runs
             with unittest.mock.patch("arraybridge.gpu_cleanup.eval") as mock_eval:
                 mock_eval.return_value = True  # GPU is available
@@ -217,7 +218,7 @@ class TestCleanupFunctionSignatures:
         """Test that cleanup functions have correct signatures."""
         import inspect
 
-        from arraybridge.gpu_cleanup import cleanup_numpy_gpu, cleanup_cupy_gpu, cleanup_torch_gpu
+        from arraybridge.gpu_cleanup import cleanup_cupy_gpu, cleanup_numpy_gpu, cleanup_torch_gpu
 
         for func in [cleanup_numpy_gpu, cleanup_cupy_gpu, cleanup_torch_gpu]:
             sig = inspect.signature(func)
@@ -229,7 +230,7 @@ class TestCleanupFunctionSignatures:
 
     def test_cleanup_function_docstrings(self):
         """Test that cleanup functions have docstrings."""
-        from arraybridge.gpu_cleanup import cleanup_numpy_gpu, cleanup_cupy_gpu, cleanup_torch_gpu
+        from arraybridge.gpu_cleanup import cleanup_cupy_gpu, cleanup_numpy_gpu, cleanup_torch_gpu
 
         for func in [cleanup_numpy_gpu, cleanup_cupy_gpu, cleanup_torch_gpu]:
             assert func.__doc__ is not None

@@ -1,10 +1,10 @@
 """Tests for arraybridge.converters module."""
 
-import pytest
 import numpy as np
-from arraybridge.converters import detect_memory_type, convert_memory
+import pytest
+
+from arraybridge.converters import convert_memory, detect_memory_type
 from arraybridge.types import MemoryType
-from arraybridge.exceptions import MemoryConversionError
 
 
 class TestDetectMemoryType:

@@ -1,8 +1,9 @@
 """Tests for arraybridge.framework_config module."""
 
-import pytest
-import unittest.mock
 import types
+import unittest.mock
+
+import pytest
 
 from arraybridge.framework_config import _FRAMEWORK_CONFIG
 from arraybridge.types import MemoryType
@@ -181,6 +182,7 @@ class TestFrameworkConfig:
     def test_pyclesperanto_get_device_id_unavailable(self, monkeypatch):
         """Test pyclesperanto device ID when pyclesperanto unavailable."""
         import sys
+
         from arraybridge.framework_config import _pyclesperanto_get_device_id
 
         # Mock pyclesperanto as unavailable
@@ -192,8 +194,9 @@ class TestFrameworkConfig:
 
     def test_pyclesperanto_get_device_id_with_mock(self):
         """Test pyclesperanto device ID with mock module."""
-        from arraybridge.framework_config import _pyclesperanto_get_device_id
         import types
+
+        from arraybridge.framework_config import _pyclesperanto_get_device_id
 
         # Create mock device with id attribute
         mock_device = types.SimpleNamespace(id=1)
@@ -236,6 +239,7 @@ class TestFrameworkConfig:
     def test_pyclesperanto_set_device_unavailable(self, monkeypatch):
         """Test pyclesperanto set device when pyclesperanto unavailable."""
         import sys
+
         from arraybridge.framework_config import _pyclesperanto_set_device
 
         # Mock pyclesperanto as unavailable
@@ -246,8 +250,9 @@ class TestFrameworkConfig:
 
     def test_pyclesperanto_set_device_with_mock(self):
         """Test pyclesperanto set device with mock module."""
-        from arraybridge.framework_config import _pyclesperanto_set_device
         import types
+
+        from arraybridge.framework_config import _pyclesperanto_set_device
 
         mock_devices = ["device0", "device1", "device2"]
         mock_module = types.SimpleNamespace(
@@ -271,6 +276,7 @@ class TestFrameworkConfig:
     def test_pyclesperanto_move_to_device_unavailable(self, monkeypatch):
         """Test pyclesperanto move to device when pyclesperanto unavailable."""
         import sys
+
         from arraybridge.framework_config import _pyclesperanto_move_to_device
 
         # Mock pyclesperanto as unavailable
@@ -283,8 +289,9 @@ class TestFrameworkConfig:
 
     def test_pyclesperanto_move_to_device_same_device(self):
         """Test pyclesperanto move to device when already on target device."""
-        from arraybridge.framework_config import _pyclesperanto_move_to_device
         import types
+
+        from arraybridge.framework_config import _pyclesperanto_move_to_device
 
         # Mock the _get_device_id function to return the same device
         data = "test_data"
@@ -296,8 +303,9 @@ class TestFrameworkConfig:
 
     def test_pyclesperanto_move_to_device_different_device(self):
         """Test pyclesperanto move to device when moving to different device."""
-        from arraybridge.framework_config import _pyclesperanto_move_to_device
         import types
+
+        from arraybridge.framework_config import _pyclesperanto_move_to_device
 
         data = "test_data"
         result_data = "moved_data"
@@ -314,6 +322,7 @@ class TestFrameworkConfig:
     def test_jax_assign_slice_function_unavailable(self, monkeypatch):
         """Test JAX assign slice function when JAX unavailable."""
         import sys
+
         from arraybridge.framework_config import _jax_assign_slice
 
         # Mock JAX as unavailable
@@ -348,6 +357,7 @@ class TestFrameworkConfig:
     def test_tensorflow_validate_dlpack_function_unavailable(self, monkeypatch):
         """Test TensorFlow DLPack validation function when TensorFlow unavailable."""
         import sys
+
         from arraybridge.framework_config import _tensorflow_validate_dlpack
 
         # Mock TensorFlow as unavailable
@@ -359,8 +369,9 @@ class TestFrameworkConfig:
 
     def test_tensorflow_validate_dlpack_old_version(self):
         """Test TensorFlow DLPack validation with old version."""
-        from arraybridge.framework_config import _tensorflow_validate_dlpack
         import types
+
+        from arraybridge.framework_config import _tensorflow_validate_dlpack
 
         # Mock TensorFlow with old version
         mock_tf = types.SimpleNamespace(__version__="2.10.0")
@@ -370,16 +381,17 @@ class TestFrameworkConfig:
 
     def test_tensorflow_validate_dlpack_new_version(self):
         """Test TensorFlow DLPack validation with supported version."""
-        from arraybridge.framework_config import _tensorflow_validate_dlpack
         import types
+
+        from arraybridge.framework_config import _tensorflow_validate_dlpack
 
         # Mock TensorFlow with supported version
         mock_tf = types.SimpleNamespace(__version__="2.15.0")
 
-        # Should return True for supported version (function continues after version check)
-        # Note: This will actually raise an error due to incomplete mocking, but version check passes
+        # Should return True for supported version
+        # Note: version check passes, may raise due to incomplete mocking
         try:
-            result = _tensorflow_validate_dlpack(None, mock_tf)
+            _tensorflow_validate_dlpack(None, mock_tf)
             # If we get here, version check passed
             assert True
         except AttributeError:
@@ -389,6 +401,7 @@ class TestFrameworkConfig:
     def test_pyclesperanto_stack_slices_unavailable(self, monkeypatch):
         """Test pyclesperanto stack slices when pyclesperanto unavailable."""
         import sys
+
         from arraybridge.framework_config import _pyclesperanto_stack_slices
 
         # Mock pyclesperanto as unavailable

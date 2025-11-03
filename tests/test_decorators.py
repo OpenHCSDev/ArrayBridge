@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from arraybridge.decorators import DtypeConversion, memory_types
-from arraybridge.types import MemoryType
 
 
 class TestDtypeConversion:

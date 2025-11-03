@@ -1,12 +1,13 @@
 """Tests for arraybridge.types module."""
 
 import pytest
+
 from arraybridge.types import (
-    MemoryType,
     CPU_MEMORY_TYPES,
     GPU_MEMORY_TYPES,
     SUPPORTED_MEMORY_TYPES,
     VALID_MEMORY_TYPES,
+    MemoryType,
 )
 
 

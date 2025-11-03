@@ -59,7 +59,6 @@ class TestConverterRegistry:
     def test_registry_validation_fails_on_missing_type(self, monkeypatch):
         """Test that registry validation fails if a memory type is missing."""
         from arraybridge.converters_registry import ConverterBase, _validate_registry
-        from arraybridge.types import MemoryType
 
         # Temporarily remove a converter from registry
         original_registry = ConverterBase.__registry__.copy()
@@ -126,7 +125,7 @@ class TestConverterRegistry:
         # They should be different instances
         assert converter1 is not converter2
         # But same type
-        assert type(converter1) == type(converter2)
+        assert isinstance(converter1, type(converter2))
 
 
 class TestMemoryTypeConverterProperty:

@@ -84,9 +84,8 @@ class TestProcessSlices:
 
     def test_process_slices_empty_special_outputs(self):
         """Test process_slices when some slices return no special outputs."""
-        from arraybridge.slice_processing import process_slices
 
-        image_3d = np.array([[[1]], [[2]]])
+        np.array([[[1]], [[2]]])
 
         # Mix of single output and tuple output
         def mixed_func(slice_2d):

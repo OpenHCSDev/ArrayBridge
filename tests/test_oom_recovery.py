@@ -139,5 +139,3 @@ class TestOOMRecovery:
 
 def test_torch_cache_clear_mock():
     """Test torch cache clear with mocked torch."""
-    import sys
-    import types

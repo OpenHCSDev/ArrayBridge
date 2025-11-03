@@ -120,7 +120,7 @@ class TestScalingFunctions:
     def test_torch_scaling_unavailable(self):
         """Test torch scaling when torch is not available."""
         from unittest.mock import patch
-        from arraybridge import dtype_scaling
+
 
         # Mock optional_import to return None for torch
         with patch("arraybridge.dtype_scaling.optional_import", return_value=None):
@@ -182,7 +182,8 @@ class TestScalingFunctions:
 
     def test_generic_scaling_eval_operations(self):
         """Test the eval operations in _scale_generic function."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from arraybridge.dtype_scaling import _scale_generic
         from arraybridge.types import MemoryType
 
@@ -198,13 +199,6 @@ class TestScalingFunctions:
             mock_arr.dtype = np.float32
 
             # Mock the operations dict for a GPU framework
-            ops = {
-                "check_float": "np.issubdtype(mock_arr.dtype, np.floating)",
-                "check_int": "target_dtype == np.uint8",
-                "min": "mock_arr.min()",
-                "max": "mock_arr.max()",
-                "astype": "mock_arr.astype(target_dtype)",
-            }
 
             # Mock numpy operations
             with patch("numpy.issubdtype", return_value=True):
@@ -295,7 +289,7 @@ class TestScalingFunctions:
 
     def test_pyclesperanto_scaling_with_gpu_array(self):
         """Test pyclesperanto scaling with actual GPU array (when pyclesperanto available)."""
-        cle = pytest.importorskip("pyclesperanto")
+        pytest.importorskip("pyclesperanto")
         scale_func = SCALING_FUNCTIONS["pyclesperanto"]
 
         # Create numpy array (pyclesperanto works with numpy arrays pushed to GPU)
@@ -309,7 +303,7 @@ class TestScalingFunctions:
 
     def test_pyclesperanto_scaling_constant_image(self):
         """Test pyclesperanto scaling with constant image."""
-        cle = pytest.importorskip("pyclesperanto")
+        pytest.importorskip("pyclesperanto")
         scale_func = SCALING_FUNCTIONS["pyclesperanto"]
 
         # Create constant image

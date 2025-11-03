@@ -1,6 +1,7 @@
 """Tests for arraybridge.exceptions module."""
 
 import pytest
+
 from arraybridge.exceptions import MemoryConversionError
 
 

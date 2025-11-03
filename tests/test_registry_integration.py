@@ -1,6 +1,5 @@
 """Integration tests demonstrating metaclass-registry benefits."""
 
-import pytest
 import numpy as np
 
 
@@ -44,9 +43,8 @@ class TestRegistryIntegration:
     def test_memory_type_enum_integration(self):
         """Test that MemoryType enum integrates seamlessly with registry."""
         from arraybridge.types import MemoryType
-        import numpy as np
 
-        arr = np.array([1, 2, 3, 4, 5])
+        np.array([1, 2, 3, 4, 5])
 
         # Can use MemoryType enum to get converter
         for mem_type in MemoryType:
@@ -56,7 +54,6 @@ class TestRegistryIntegration:
     def test_convert_memory_uses_registry(self):
         """Test that convert_memory function uses registry-based converters."""
         from arraybridge.converters import convert_memory
-        import numpy as np
 
         arr = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
 
@@ -118,7 +115,7 @@ class TestConverterIsolation:
         conv2 = get_converter("numpy")
 
         assert conv1 is not conv2
-        assert type(conv1) == type(conv2)
+        assert isinstance(conv1, type(conv2))
         assert conv1.memory_type == conv2.memory_type
 
     def test_converter_classes_are_registered_not_instances(self):

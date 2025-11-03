@@ -1,9 +1,11 @@
 """Tests for arraybridge.utils module."""
 
 import sys
-import pytest
+
 import numpy as np
-from arraybridge.utils import optional_import, _ModulePlaceholder
+import pytest
+
+from arraybridge.utils import _ModulePlaceholder, optional_import
 
 
 class TestOptionalImport:
@@ -157,8 +159,9 @@ class TestDeviceOperations:
 
     def test_get_device_id_numpy(self):
         """Test getting device ID for NumPy arrays."""
-        from arraybridge.utils import _get_device_id
         import numpy as np
+
+        from arraybridge.utils import _get_device_id
 
         arr = np.array([1, 2, 3])
         device_id = _get_device_id(arr, "numpy")
@@ -173,8 +176,9 @@ class TestDeviceOperations:
 
     def test_move_to_device_numpy(self):
         """Test moving NumPy array to device (should return same array)."""
-        from arraybridge.utils import _move_to_device
         import numpy as np
+
+        from arraybridge.utils import _move_to_device
 
         arr = np.array([1, 2, 3])
         result = _move_to_device(arr, "numpy", 0)
@@ -334,9 +338,8 @@ class TestGetDeviceIdCallableHandler:
     def test_get_device_id_with_callable_handler(self, monkeypatch):
         """Test _get_device_id with a callable handler (pyclesperanto)."""
         import types
+
         from arraybridge.utils import _get_device_id
-        from arraybridge.framework_config import _FRAMEWORK_CONFIG
-        from arraybridge.types import MemoryType
 
         # Create mock pyclesperanto module
         mock_cle = types.SimpleNamespace()
@@ -357,6 +360,7 @@ class TestGetDeviceIdCallableHandler:
     def test_get_device_id_fallback_on_error(self, monkeypatch):
         """Test _get_device_id fallback when eval fails."""
         import types
+
         from arraybridge.utils import _get_device_id
 
         # Create a mock torch tensor that will fail device ID extraction
