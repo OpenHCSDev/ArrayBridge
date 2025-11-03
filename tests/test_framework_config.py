@@ -93,6 +93,10 @@ class TestFrameworkConfig:
             config = _FRAMEWORK_CONFIG[mem_type]
             scaling_ops = config['scaling_ops']
 
+            # Skip frameworks with custom scaling (like pyclesperanto)
+            if scaling_ops is None:
+                continue
+
             for key in required_scaling_keys:
                 assert key in scaling_ops, f"Missing {key} in {mem_type.value} scaling_ops"
 
@@ -112,7 +116,7 @@ class TestFrameworkConfig:
     def test_dlpack_support(self):
         """Test DLPack support configuration."""
         # Frameworks that support DLPack
-        dlpack_supported = [MemoryType.TORCH, MemoryType.TENSORFLOW, MemoryType.JAX]
+        dlpack_supported = [MemoryType.CUPY, MemoryType.TORCH, MemoryType.TENSORFLOW, MemoryType.JAX]
 
         for mem_type in MemoryType:
             config = _FRAMEWORK_CONFIG[mem_type]
