@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 def _pyclesperanto_get_device_id(data: Any, mod: Any) -> int:
     """Get device ID for pyclesperanto array."""
+    if mod is None:
+        return 0
     try:
         current_device = mod.get_device()
         if hasattr(current_device, 'id'):
@@ -41,6 +43,8 @@ def _pyclesperanto_get_device_id(data: Any, mod: Any) -> int:
 
 def _pyclesperanto_set_device(device_id: int, mod: Any) -> None:
     """Set device for pyclesperanto."""
+    if mod is None:
+        return
     devices = mod.list_available_devices()
     if device_id >= len(devices):
         raise ValueError(f"Device {device_id} not available. Available: {len(devices)}")
@@ -49,6 +53,8 @@ def _pyclesperanto_set_device(device_id: int, mod: Any) -> None:
 
 def _pyclesperanto_move_to_device(data: Any, device_id: int, mod: Any, memory_type: str) -> Any:
     """Move pyclesperanto array to device."""
+    if mod is None:
+        return data
     # Import here to avoid circular dependency
     from arraybridge.utils import _get_device_id
 
@@ -64,6 +70,8 @@ def _pyclesperanto_move_to_device(data: Any, device_id: int, mod: Any, memory_ty
 
 def _pyclesperanto_stack_slices(slices: list, memory_type: str, gpu_id: int, mod: Any) -> Any:
     """Stack slices using pyclesperanto's concatenate_along_z."""
+    if mod is None:
+        return None
     from arraybridge.converters import convert_memory, detect_memory_type
 
     converted_slices = []
@@ -93,10 +101,25 @@ def _pyclesperanto_stack_slices(slices: list, memory_type: str, gpu_id: int, mod
 
 def _jax_assign_slice(result: Any, index: int, slice_data: Any) -> Any:
     """Assign slice to JAX array (immutable)."""
+    if result is None:
+        return None
     return result.at[index].set(slice_data)
 
 
 def _tensorflow_validate_dlpack(obj: Any, mod: Any) -> bool:
+    """Validate TensorFlow DLPack support."""
+    if mod is None:
+        return False
+    # Check version
+    major, minor = map(int, mod.__version__.split('.')[:2])
+    if major < 2 or (major == 2 and minor < 12):
+        raise RuntimeError(
+            f"TensorFlow {mod.__version__} does not support stable DLPack. "
+            f"Version 2.12.0+ required. "
+            f"Clause 88 violation: Cannot infer DLPack capability."
+        )
+
+    # Check GPU
     """Validate TensorFlow DLPack support."""
     # Check version
     major, minor = map(int, mod.__version__.split('.')[:2])
