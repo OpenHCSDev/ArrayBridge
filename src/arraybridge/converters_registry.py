@@ -25,6 +25,7 @@ class ConverterBase(metaclass=AutoRegisterMeta):
     """
 
     __registry_key__ = "memory_type"
+    __registry__ = {}  # Simple dict - no lazy discovery needed (converters created dynamically below)
     memory_type: str = None
 
     @abstractmethod
