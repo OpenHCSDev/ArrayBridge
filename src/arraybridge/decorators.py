@@ -172,39 +172,47 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
         if dtype_conversion is None:
             dtype_conversion = DtypeConversion.PRESERVE_INPUT
 
+        # Store original dtype
+        original_dtype = getattr(image, "dtype", None)
+
+        # Handle slice_by_slice processing for 3D arrays
+        if slice_by_slice and hasattr(image, "ndim") and image.ndim == 3:
+            result = process_slices(image, func, args, kwargs)
+        else:
+            # Call the original function normally
+            result = func(image, *args, **kwargs)
+
+        def _apply_dtype_conversion(array):
+            if dtype_conversion is None or not hasattr(array, "dtype"):
+                return array
+            if dtype_conversion == DtypeConversion.PRESERVE_INPUT:
+                # Preserve input dtype
+                if original_dtype is not None and array.dtype != original_dtype:
+                    return scale_func(array, original_dtype)
+                return array
+            if dtype_conversion == DtypeConversion.NATIVE_OUTPUT:
+                # Return framework's native output dtype
+                return array
+            # Force specific dtype
+            target_dtype = dtype_conversion.numpy_dtype
+            if target_dtype is not None:
+                return scale_func(array, target_dtype)
+            return array
+
         try:
-            # Store original dtype
-            original_dtype = image.dtype
-
-            # Handle slice_by_slice processing for 3D arrays
-            if slice_by_slice and hasattr(image, "ndim") and image.ndim == 3:
-                result = process_slices(image, func, args, kwargs)
-            else:
-                # Call the original function normally
-                result = func(image, *args, **kwargs)
-
-            # Apply dtype conversion based on enum value
-            if hasattr(result, "dtype") and dtype_conversion is not None:
-                if dtype_conversion == DtypeConversion.PRESERVE_INPUT:
-                    # Preserve input dtype
-                    if result.dtype != original_dtype:
-                        result = scale_func(result, original_dtype)
-                elif dtype_conversion == DtypeConversion.NATIVE_OUTPUT:
-                    # Return framework's native output dtype
-                    pass  # No conversion needed
-                else:
-                    # Force specific dtype
-                    target_dtype = dtype_conversion.numpy_dtype
-                    if target_dtype is not None:
-                        result = scale_func(result, target_dtype)
-
-            return result
+            # Apply dtype conversion to the main output
+            if isinstance(result, tuple):
+                if not result:
+                    return result
+                converted_main = _apply_dtype_conversion(result[0])
+                return (converted_main, *result[1:])
+            return _apply_dtype_conversion(result)
         except Exception as e:
             logger.error(
                 f"Error in {mem_type.value} dtype/slice preserving wrapper " f"for {func_name}: {e}"
             )
-            # Return original result on error
-            return func(image, *args, **kwargs)
+            # Return unmodified result on conversion errors
+            return result
 
     # Update function signature to include new parameters
     try:
