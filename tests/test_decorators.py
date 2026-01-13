@@ -141,6 +141,22 @@ class TestFrameworkDecorators:
         assert result.dtype == np.uint8
         assert result.shape == arr.shape
 
+    def test_numpy_decorator_tuple_dtype_conversion(self):
+        """Test tuple output dtype conversion applies to main output only."""
+        from arraybridge.decorators import numpy
+
+        @numpy
+        def to_float_with_meta(arr):
+            return arr.astype(np.float32), {"meta": "ok"}
+
+        arr = np.array([0, 127, 255], dtype=np.uint8)
+        result = to_float_with_meta(arr)
+
+        assert isinstance(result, tuple)
+        assert result[0].dtype == np.uint8
+        assert result[0].shape == arr.shape
+        assert result[1]["meta"] == "ok"
+
     def test_cupy_decorator_exists(self):
         """Test that cupy decorator is available."""
         from arraybridge.decorators import cupy
