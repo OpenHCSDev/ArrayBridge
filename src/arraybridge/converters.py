@@ -6,7 +6,7 @@ import numpy as np
 
 from arraybridge.converters_registry import get_converter
 from arraybridge.framework_config import _FRAMEWORK_CONFIG
-from arraybridge.types import MemoryType
+from arraybridge.types import MemoryType, VALID_MEMORY_TYPES
 
 
 def convert_memory(data: Any, source_type: str, target_type: str, gpu_id: int) -> Any:
@@ -26,6 +26,13 @@ def convert_memory(data: Any, source_type: str, target_type: str, gpu_id: int) -
         ValueError: If source_type or target_type is invalid
         MemoryConversionError: If conversion fails
     """
+    if isinstance(target_type, MemoryType):
+        target_type = target_type.value
+    if target_type not in VALID_MEMORY_TYPES:
+        raise ValueError(
+            f"Invalid target_type '{target_type}'. Available types: {sorted(VALID_MEMORY_TYPES)}"
+        )
+
     converter = get_converter(source_type)  # Will raise ValueError if invalid
     method = getattr(converter, f"to_{target_type}")
     return method(data, gpu_id)
@@ -51,10 +58,14 @@ def detect_memory_type(data: Any) -> str:
     # Check all frameworks using their module names from config
     module_name = type(data).__module__
 
+    top_level = module_name.split(".")[0]
+
     for mem_type, config in _FRAMEWORK_CONFIG.items():
         import_name = config["import_name"]
-        # Check if module name starts with or contains the import name
-        if module_name.startswith(import_name) or import_name in module_name:
+        aliases = {import_name}
+        if import_name == "jax":
+            aliases.add("jaxlib")
+        if top_level in aliases:
             return mem_type.value
 
     raise ValueError(f"Unknown memory type for {type(data)} (module: {module_name})")

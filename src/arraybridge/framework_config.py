@@ -121,17 +121,6 @@ def _tensorflow_validate_dlpack(obj: Any, mod: Any) -> bool:
         )
 
     # Check GPU
-    """Validate TensorFlow DLPack support."""
-    # Check version
-    major, minor = map(int, mod.__version__.split(".")[:2])
-    if major < 2 or (major == 2 and minor < 12):
-        raise RuntimeError(
-            f"TensorFlow {mod.__version__} does not support stable DLPack. "
-            f"Version 2.12.0+ required. "
-            f"Clause 88 violation: Cannot infer DLPack capability."
-        )
-
-    # Check GPU
     device_str = obj.device.lower()
     if "gpu" not in device_str:
         raise RuntimeError(

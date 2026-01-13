@@ -85,8 +85,7 @@ class TestConvertMemory:
     def test_convert_invalid_target_type(self):
         """Test that invalid target type raises error."""
         arr = np.array([1, 2, 3])
-        # This might raise ValueError or AttributeError depending on implementation
-        with pytest.raises((ValueError, AttributeError)):
+        with pytest.raises(ValueError):
             convert_memory(arr, source_type="numpy", target_type="invalid_type", gpu_id=0)
 
     @pytest.mark.torch
