@@ -83,10 +83,10 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/trissim/arraybridge"
+Homepage = "https://github.com/OpenHCSDev/arraybridge"
 Documentation = "https://arraybridge.readthedocs.io"
-Repository = "https://github.com/trissim/arraybridge"
-Issues = "https://github.com/trissim/arraybridge/issues"
+Repository = "https://github.com/OpenHCSDev/arraybridge"
+Issues = "https://github.com/OpenHCSDev/arraybridge/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arraybridge"]
