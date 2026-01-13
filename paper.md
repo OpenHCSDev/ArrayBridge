@@ -1,5 +1,5 @@
 ---
-title: 'arraybridge: Unified Array Conversion Across Six GPU Frameworks with OOM Recovery and Thread-Local Streams'
+title: 'arraybridge: Unified Array Conversion Across Five GPU Frameworks and NumPy with OOM Recovery and Thread-Local Streams'
 tags:
   - Python
   - GPU computing
@@ -8,7 +8,7 @@ tags:
   - scientific computing
 authors:
   - name: Tristan Simas
-    orcid: 0000-0000-0000-0000  # [TODO: Add ORCID]
+    orcid: 0000-0002-6526-3149
     affiliation: 1
 affiliations:
   - name: McGill University
@@ -145,4 +145,3 @@ Generative AI (Claude) assisted with code generation and documentation. All cont
 This work was supported by [TODO: Add funding sources].
 
 # References
-
