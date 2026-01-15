@@ -143,7 +143,7 @@ slices_2d = [np.random.rand(100, 100) for _ in range(50)]
 volume_3d = stack_slices(slices_2d, memory_type='torch', gpu_id=0)
 
 # Unstack 3D array into 2D slices
-slices_back = unstack_slices(volume_3d, memory_type='torch')
+slices_back = unstack_slices(volume_3d, memory_type='torch', gpu_id=0)
 ```
 
 ## Documentation

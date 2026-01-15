@@ -32,13 +32,13 @@ Stack a list of 2D arrays into a 3D volume.
    slices = [np.random.rand(512, 512) for _ in range(100)]
 
    # Stack into 3D volume (100, 512, 512)
-   volume = stack_slices(slices, target_type='numpy')
+   volume = stack_slices(slices, memory_type='numpy', gpu_id=0)
 
 **Parameters:**
 
 - ``slices``: List of 2D arrays
-- ``target_type``: Target memory type ('numpy', 'cupy', 'torch', etc.)
-- ``gpu_id``: GPU device ID (default: 0 for GPU types, None for CPU)
+- ``memory_type``: Target memory type ('numpy', 'cupy', 'torch', 'tensorflow', 'jax', 'pyclesperanto')
+- ``gpu_id``: GPU device ID (required, validated for GPU memory types)
 
 **Returns:**
 
@@ -61,16 +61,17 @@ Unstack a 3D volume into a list of 2D slices.
    volume = np.random.rand(100, 512, 512)
 
    # Unstack into list of 2D slices
-   slices = unstack_slices(volume, target_type='numpy')
+   slices = unstack_slices(volume, memory_type='numpy', gpu_id=0)
 
    print(len(slices))  # 100
    print(slices[0].shape)  # (512, 512)
 
 **Parameters:**
 
-- ``volume``: 3D array/tensor with shape (depth, height, width)
-- ``target_type``: Target memory type for output slices
-- ``gpu_id``: GPU device ID (default: 0 for GPU types, None for CPU)
+- ``array``: 3D array/tensor with shape (depth, height, width)
+- ``memory_type``: Target memory type for output slices
+- ``gpu_id``: GPU device ID (required, validated for GPU memory types)
+- ``validate_slices``: If True, validates that each extracted slice is 2D (default: True)
 
 **Returns:**
 
@@ -95,11 +96,11 @@ NumPy Stacking
    slices = [np.random.rand(256, 256) for _ in range(50)]
 
    # Stack
-   volume = stack_slices(slices, target_type='numpy')
+   volume = stack_slices(slices, memory_type='numpy', gpu_id=0)
    print(volume.shape)  # (50, 256, 256)
 
    # Unstack
-   recovered_slices = unstack_slices(volume, target_type='numpy')
+   recovered_slices = unstack_slices(volume, memory_type='numpy', gpu_id=0)
    print(len(recovered_slices))  # 50
 
 GPU Stacking
@@ -116,7 +117,7 @@ GPU Stacking
    # Stack directly to GPU
    gpu_volume = stack_slices(
        cpu_slices,
-       target_type='cupy',
+       memory_type='cupy',
        gpu_id=0
    )
 
@@ -135,10 +136,10 @@ Cross-Framework Stacking
    torch_slices = [torch.rand(128, 128) for _ in range(20)]
 
    # Stack to NumPy
-   np_volume = stack_slices(torch_slices, target_type='numpy')
+   np_volume = stack_slices(torch_slices, memory_type='numpy', gpu_id=0)
 
    # Or stack to CuPy
-   cupy_volume = stack_slices(torch_slices, target_type='cupy', gpu_id=0)
+   cupy_volume = stack_slices(torch_slices, memory_type='cupy', gpu_id=0)
 
 Image Processing
 ----------------
@@ -161,9 +162,9 @@ Process each slice individually:
    volume = np.random.rand(100, 512, 512)
 
    # Unstack, process, restack
-   slices = unstack_slices(volume, target_type='numpy')
+   slices = unstack_slices(volume, memory_type='numpy', gpu_id=0)
    processed_slices = [process_slice(s) for s in slices]
-   processed_volume = stack_slices(processed_slices, target_type='numpy')
+   processed_volume = stack_slices(processed_slices, memory_type='numpy', gpu_id=0)
 
 GPU-Accelerated Processing
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -176,7 +177,7 @@ GPU-Accelerated Processing
    def gpu_filter_volume(volume):
        """Apply GPU filtering to each slice."""
        # Unstack to list
-       slices = unstack_slices(volume, target_type='numpy')
+       slices = unstack_slices(volume, memory_type='numpy', gpu_id=0)
 
        # Process each slice on GPU
        filtered_slices = []
@@ -194,12 +195,13 @@ GPU-Accelerated Processing
            cpu_filtered = convert_memory(
                filtered,
                source_type='cupy',
-               target_type='numpy'
+               target_type='numpy',
+               gpu_id=0
            )
            filtered_slices.append(cpu_filtered)
 
        # Restack
-       return stack_slices(filtered_slices, target_type='numpy')
+       return stack_slices(filtered_slices, memory_type='numpy', gpu_id=0)
 
 Batch Processing
 ~~~~~~~~~~~~~~~~
@@ -212,23 +214,23 @@ Process slices in batches for efficiency:
 
    def batch_process_volume(volume, batch_size=10):
        """Process volume in batches."""
-       slices = unstack_slices(volume, target_type='numpy')
+       slices = unstack_slices(volume, memory_type='numpy', gpu_id=0)
        processed_slices = []
 
        for i in range(0, len(slices), batch_size):
            batch = slices[i:i+batch_size]
 
            # Stack batch
-           batch_volume = stack_slices(batch, target_type='torch', gpu_id=0)
+           batch_volume = stack_slices(batch, memory_type='torch', gpu_id=0)
 
            # Process batch on GPU
            processed_batch = process_on_gpu(batch_volume)
 
            # Unstack batch
-           batch_slices = unstack_slices(processed_batch, target_type='numpy')
+           batch_slices = unstack_slices(processed_batch, memory_type='numpy', gpu_id=0)
            processed_slices.extend(batch_slices)
 
-       return stack_slices(processed_slices, target_type='numpy')
+       return stack_slices(processed_slices, memory_type='numpy', gpu_id=0)
 
 Medical Imaging Applications
 -----------------------------
@@ -256,13 +258,13 @@ CT/MRI Volume Processing
        slices = load_dicom_slices(dicom_dir)
 
        # Stack into volume
-       volume = stack_slices(slices, target_type='numpy')
+       volume = stack_slices(slices, memory_type='numpy', gpu_id=0)
 
        # Apply processing (e.g., segmentation, registration)
        processed = medical_processing(volume)
 
        # Unstack for saving
-       output_slices = unstack_slices(processed, target_type='numpy')
+       output_slices = unstack_slices(processed, memory_type='numpy', gpu_id=0)
 
        return output_slices
 
@@ -280,7 +282,7 @@ Microscopy Image Stacks
        slices = [load_image(f) for f in image_files]
 
        # Stack
-       stack = stack_slices(slices, target_type='numpy')
+       stack = stack_slices(slices, memory_type='numpy', gpu_id=0)
 
        # Maximum intensity projection
        mip = stack.max(axis=0)
@@ -306,7 +308,7 @@ For large volumes, consider processing in chunks:
 
        for i in range(0, len(slices), chunk_size):
            chunk_slices = slices[i:i+chunk_size]
-           chunk = stack_slices(chunk_slices, target_type='numpy')
+           chunk = stack_slices(chunk_slices, memory_type='numpy', gpu_id=0)
            chunks.append(chunk)
 
        # Concatenate chunks
@@ -336,7 +338,7 @@ Load and process slices on-demand:
        def to_volume(self):
            """Stack all slices."""
            slices = [self[i] for i in range(len(self))]
-           return stack_slices(slices, target_type='numpy')
+           return stack_slices(slices, memory_type='numpy', gpu_id=0)
 
 Parallel Processing
 ~~~~~~~~~~~~~~~~~~~
@@ -356,7 +358,7 @@ Process slices in parallel:
        with ThreadPoolExecutor(max_workers=num_workers) as executor:
            processed_slices = list(executor.map(process_one, slices))
 
-       return stack_slices(processed_slices, target_type='numpy')
+       return stack_slices(processed_slices, memory_type='numpy', gpu_id=0)
 
 Multi-GPU Stacking
 ~~~~~~~~~~~~~~~~~~
@@ -389,11 +391,12 @@ Distribute slices across GPUs:
            cpu_slice = convert_memory(
                processed,
                source_type='torch',
-               target_type='numpy'
+               target_type='numpy',
+               gpu_id=gpu_id
            )
            results.append(cpu_slice)
 
-       return stack_slices(results, target_type='numpy')
+       return stack_slices(results, memory_type='numpy', gpu_id=0)
 
 Advanced Usage
 --------------
@@ -411,7 +414,7 @@ Stack along different axes:
    slices = [np.random.rand(10, 20) for _ in range(5)]
 
    # Default: stack along axis 0 → (5, 10, 20)
-   volume1 = stack_slices(slices, target_type='numpy')
+   volume1 = stack_slices(slices, memory_type='numpy', gpu_id=0)
 
    # For other axes, use NumPy directly after stacking
    volume2 = np.moveaxis(volume1, 0, 2)  # (10, 20, 5)
@@ -429,7 +432,7 @@ Mixed Precision Stacking
                  for _ in range(50)]
 
    # Stack maintains dtype
-   volume = stack_slices(slices_f32, target_type='numpy')
+   volume = stack_slices(slices_f32, memory_type='numpy', gpu_id=0)
    print(volume.dtype)  # float32
 
 Weighted Stacking
@@ -445,7 +448,7 @@ Apply weights during stacking:
    def weighted_stack(slices, weights):
        """Stack with per-slice weights."""
        # Stack normally
-       volume = stack_slices(slices, target_type='numpy')
+       volume = stack_slices(slices, memory_type='numpy', gpu_id=0)
 
        # Apply weights
        weights = np.array(weights).reshape(-1, 1, 1)
@@ -470,7 +473,7 @@ Pattern: Volume Iterator
 
        def __init__(self, volume):
            self.volume = volume
-           self.slices = unstack_slices(volume, target_type='numpy')
+           self.slices = unstack_slices(volume, memory_type='numpy', gpu_id=0)
 
        def __iter__(self):
            return iter(self.slices)
@@ -498,7 +501,7 @@ Pattern: Slice Cache
 
        def __init__(self, volume):
            self.volume = volume
-           self.slices = unstack_slices(volume, target_type='numpy')
+           self.slices = unstack_slices(volume, memory_type='numpy', gpu_id=0)
 
        @lru_cache(maxsize=32)
        def get_processed_slice(self, idx):
@@ -523,7 +526,7 @@ Pattern: Progressive Loading
            if len(processed_slices) % 10 == 0:
                save_checkpoint(processed_slices)
 
-       return stack_slices(processed_slices, target_type='numpy')
+       return stack_slices(processed_slices, memory_type='numpy', gpu_id=0)
 
 Error Handling
 --------------
@@ -548,17 +551,17 @@ Shape Validation
                    f"Slice {i} shape {s.shape} != first shape {first_shape}"
                )
 
-       return stack_slices(slices, target_type='numpy')
+       return stack_slices(slices, memory_type='numpy', gpu_id=0)
 
 Memory Error Handling
 ~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   def robust_stack(slices, target_type='numpy'):
+   def robust_stack(slices, memory_type='numpy', gpu_id=0):
        """Stack with memory error handling."""
        try:
-           return stack_slices(slices, target_type=target_type)
+           return stack_slices(slices, memory_type=memory_type, gpu_id=gpu_id)
        except MemoryError:
            # Try processing in smaller chunks
            print("Memory error, processing in chunks...")
@@ -579,8 +582,8 @@ Unit Tests
    def test_stack_unstack_roundtrip():
        """Test stack/unstack preserves data."""
        slices = [np.random.rand(10, 10) for _ in range(5)]
-       volume = stack_slices(slices, target_type='numpy')
-       recovered = unstack_slices(volume, target_type='numpy')
+       volume = stack_slices(slices, memory_type='numpy', gpu_id=0)
+       recovered = unstack_slices(volume, memory_type='numpy', gpu_id=0)
 
        assert len(recovered) == len(slices)
        for orig, rec in zip(slices, recovered):
