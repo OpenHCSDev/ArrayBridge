@@ -133,6 +133,6 @@ Generative AI (Claude) assisted with code generation and documentation. All cont
 
 # Acknowledgements
 
-This work was supported by [TODO: Add funding sources].
+This work was supported in part by the Fournier lab at the Montreal Neurological Institute, McGill University.
 
 # References
