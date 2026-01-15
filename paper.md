@@ -114,7 +114,18 @@ def _execute_with_oom_recovery(func, memory_type, max_retries=2):
             _clear_cache_for_memory_type(memory_type)
 ```
 
-**Dtype preservation** handles the common case where GPU operations produce float32 output from integer input. The `SCALING_FUNCTIONS` registry applies framework-specific scaling and clamping to convert back to the original dtype without overflow.
+This is critical for microscopy pipelines where image sizes are unpredictable. A 4K image might fit in GPU memory, but a 16K image might not. With OOM recovery, the pipeline automatically falls back to CPU processing without user intervention.
+
+**Dtype preservation** handles the common case where GPU operations produce float32 output from integer input. Microscopy data is typically uint16 (16-bit unsigned integers). When a Gaussian filter produces float32 output, arraybridge automatically scales and clamps back to uint16 without overflow:
+
+```python
+# Input: uint16 image with values 0-65535
+# Gaussian filter produces float32 with values 0.0-65535.0
+# arraybridge scales back to uint16 automatically
+result = gaussian_filter(image)  # Still uint16
+```
+
+The `SCALING_FUNCTIONS` registry applies framework-specific scaling and clamping to convert back to the original dtype without overflow. This preserves the user's mental model—they think in terms of their original data type, not the intermediate float32 representation.
 
 # Research Impact Statement
 
