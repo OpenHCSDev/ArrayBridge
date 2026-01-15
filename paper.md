@@ -1,5 +1,5 @@
 ---
-title: 'arraybridge: Unified Array Conversion Across Five GPU Frameworks and NumPy with OOM Recovery and Thread-Local Streams'
+title: 'arraybridge: Zero-Copy GPU Array Conversion with OOM Recovery Across Six Frameworks'
 tags:
   - Python
   - GPU computing
@@ -30,13 +30,16 @@ tensorflow_to_numpy = data.numpy()
 pyclesperanto_to_numpy = cle.pull(data)
 ```
 
-With arraybridge:
+With arraybridge, users declare their function's memory type via decorators:
 
 ```python
-result = convert_memory(data, source_type='cupy', target_type='torch', gpu_id=0)
+@cupy
+def sobel_2d(image):
+    """Edge detection on GPU with automatic OOM recovery."""
+    return cp.gradient(image)
 ```
 
-The library handles DLPack zero-copy transfers when available, falls back to NumPy bridging otherwise, manages per-thread CUDA streams for safe parallelization, detects and recovers from GPU out-of-memory errors across all frameworks, and preserves dtypes through conversions preventing silent precision loss.
+The decorator handles DLPack zero-copy transfers when available, falls back to NumPy bridging otherwise, manages per-thread CUDA streams for safe parallelization, detects and recovers from GPU out-of-memory errors, and preserves dtypes through conversions.
 
 # Statement of Need
 
@@ -51,6 +54,15 @@ The problem is not just syntax—each framework has different:
 
 Writing correct multi-framework code requires understanding all these differences. `arraybridge` consolidates this knowledge into a single declarative configuration, generating 36 conversion methods (6 frameworks × 6 target types) from ~450 lines of configuration rather than hand-written code for each path.
 
+| Feature | DLPack | Framework utils | arraybridge |
+|---------|:------:|:---------------:|:-----------:|
+| Zero-copy transfer | ✓ | — | ✓ |
+| OOM recovery | — | — | ✓ |
+| Thread-local streams | — | — | ✓ |
+| Dtype preservation | — | — | ✓ |
+| Unified API (36 paths) | — | — | ✓ |
+| Automatic fallback | — | — | ✓ |
+
 # State of the Field
 
 **DLPack** [@dlpack] provides a zero-copy tensor sharing protocol adopted by all major frameworks. However, DLPack handles only the data transfer—users must still detect framework types, handle fallbacks when DLPack fails, manage device placement, and deal with framework-specific exceptions.
@@ -59,16 +71,9 @@ Writing correct multi-framework code requires understanding all these difference
 
 **Framework-specific utilities** (`torch.from_numpy()`, `cupy.asarray()`) handle only their own framework pairs. They provide no OOM recovery, no stream management, and no dtype preservation guarantees.
 
-`arraybridge` differs in four key areas:
-
-1. **Unified conversion API**: Single function for all 36 source/target combinations
-2. **Automatic OOM recovery**: Detects framework-specific exception types and string patterns, clears caches, retries
-3. **Thread-local CUDA streams**: Each thread gets its own stream, enabling true parallel GPU execution
-4. **Dtype preservation**: Scales floating-point results to integer ranges when converting back to integer dtypes, preventing silent precision loss
-
 # Software Design
 
-The architecture is data-driven. All framework-specific behavior is defined in `_FRAMEWORK_CONFIG`:
+The architecture uses data-driven metaprogramming. All framework-specific behavior is declared in `_FRAMEWORK_CONFIG`:
 
 ```python
 _FRAMEWORK_CONFIG = {
@@ -82,33 +87,21 @@ _FRAMEWORK_CONFIG = {
         "oom_clear_cache": "{mod}.get_default_memory_pool().free_all_blocks()",
         "stream_context": "{mod}.cuda.Stream()",
     },
-    MemoryType.TORCH: {
-        "conversion_ops": {
-            "to_numpy": "data.cpu().numpy()",
-            "from_numpy": "{mod}.from_numpy(data).cuda(gpu_id)",
-            "from_dlpack": "{mod}.from_dlpack(data)",
-        },
-        "oom_exception_types": ["{mod}.cuda.OutOfMemoryError"],
-        "oom_clear_cache": "{mod}.cuda.empty_cache()",
-        "stream_context": "{mod}.cuda.Stream()",
-    },
-    # Similar entries for TENSORFLOW, JAX, PYCLESPERANTO, NUMPY
+    # Similar entries for TORCH, TENSORFLOW, JAX, PYCLESPERANTO, NUMPY
 }
 ```
 
-At import time, converter classes are generated dynamically via `AutoRegisterMeta` from the `metaclass-registry` library. Each converter implements `to_numpy()`, `from_numpy()`, `from_dlpack()`, and `to_X()` methods for all target frameworks. The metaclass auto-registers each converter by its `memory_type` attribute, eliminating manual registration.
+At import time, converter classes are generated dynamically via `AutoRegisterMeta` from the `metaclass-registry` library [@metaclassregistry]. Each converter implements `to_numpy()`, `from_numpy()`, `from_dlpack()`, and `to_X()` methods for all target frameworks. Adding a seventh framework requires only adding its entry to `_FRAMEWORK_CONFIG`—no new code paths.
 
-**Thread-local GPU streams** are managed via `threading.local()`. The `@cupy` and `@torch` decorators automatically create per-thread CUDA streams:
+**Thread-local GPU streams** are managed via `threading.local()`. Without this, multiple threads sharing a GPU would serialize on the default stream or corrupt each other's operations. With per-thread streams, true parallel GPU execution is possible:
 
 ```python
-@torch(oom_recovery=True)
+@torch
 def segment_image(image):
     return model(image)  # Runs on thread-local stream
 ```
 
-This enables true parallelization—multiple threads can execute GPU operations simultaneously without stream conflicts.
-
-**OOM recovery** unifies detection across frameworks. The library checks both exception types and error string patterns (e.g., "out of memory", "resource_exhausted"), clears framework-specific caches, and retries:
+**OOM recovery** (enabled by default) unifies detection across frameworks. The library checks both exception types and error string patterns (e.g., "out of memory", "resource_exhausted"), clears framework-specific caches, and retries:
 
 ```python
 def _execute_with_oom_recovery(func, memory_type, max_retries=2):
@@ -127,12 +120,10 @@ def _execute_with_oom_recovery(func, memory_type, max_retries=2):
 
 `arraybridge` is a core component of OpenHCS, an open-source platform for high-content screening microscopy. In OpenHCS pipelines:
 
-- **GPU-accelerated stitching** (`ashlar_compute_tile_positions_gpu`) uses CuPy for phase correlation
-- **Flatfield correction** (`basic_flatfield_correction_cupy`) uses CuPy with OOM recovery and automatic fallback to CPU
-- **Edge detection** (`sobel_2d_vectorized`) uses CuPy with dtype preservation to maintain uint16 microscopy data
+- **GPU-accelerated stitching** uses CuPy for phase correlation
+- **Flatfield correction** uses CuPy with OOM recovery and automatic fallback to CPU
+- **Edge detection** uses CuPy with dtype preservation to maintain uint16 microscopy data
 - **Deep learning segmentation** integrates PyTorch models via the `@torch` decorator
-
-The stack utilities (`stack_slices`, `unstack_slices`) enable efficient 3D volume processing where 2D slices are stacked to GPU, processed in parallel, and unstacked back to CPU. This pattern is used throughout OpenHCS for processing microscopy Z-stacks.
 
 The thread-local stream management is critical for high-throughput screening where thousands of images must be processed per experiment. Multiple worker threads can process different images on the same GPU without coordination overhead.
 
