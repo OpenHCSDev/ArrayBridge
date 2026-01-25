@@ -5,7 +5,7 @@ This package provides automatic memory type conversion, declarative decorators,
 and unified utilities for working with multiple array/tensor frameworks.
 """
 
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 
 from .converters import convert_memory, detect_memory_type
 from .decorators import (
