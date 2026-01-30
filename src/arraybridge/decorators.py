@@ -167,8 +167,9 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
     scale_func = SCALING_FUNCTIONS[mem_type.value]
 
     @functools.wraps(func)
-    def dtype_wrapper(image, *args, dtype_conversion=None, slice_by_slice: bool = False, **kwargs):
-        # Set default dtype_conversion if not provided
+    def dtype_wrapper(image, *args, slice_by_slice: bool = False, **kwargs):
+        # Get dtype_conversion from kwargs (injected by OpenHCS dtype_config)
+        dtype_conversion = kwargs.pop('dtype_conversion', None)
         if dtype_conversion is None:
             dtype_conversion = DtypeConversion.PRESERVE_INPUT
 
@@ -222,16 +223,6 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
         # Check if parameters already exist
         param_names = [p.name for p in new_params]
 
-        # Add dtype_conversion parameter first (before slice_by_slice)
-        if "dtype_conversion" not in param_names:
-            dtype_param = inspect.Parameter(
-                "dtype_conversion",
-                inspect.Parameter.KEYWORD_ONLY,
-                default=DtypeConversion.PRESERVE_INPUT,
-                annotation=Optional[DtypeConversion],
-            )
-            new_params.append(dtype_param)
-
         # Add slice_by_slice parameter
         if "slice_by_slice" not in param_names:
             slice_param = inspect.Parameter(
@@ -248,11 +239,6 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
             dtype_wrapper.__doc__ += (
                 f"\n\n    Additional Parameters " f"(added by {mem_type.value} decorator):\n"
             )
-            dtype_wrapper.__doc__ += (
-                "        dtype_conversion (DtypeConversion, optional): "
-                "How to handle output dtype.\n"
-            )
-            dtype_wrapper.__doc__ += "            Defaults to PRESERVE_INPUT (match input dtype).\n"
             dtype_wrapper.__doc__ += (
                 "        slice_by_slice (bool, optional): " "Process 3D arrays slice-by-slice.\n"
             )
