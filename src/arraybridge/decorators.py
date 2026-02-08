@@ -168,10 +168,10 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
 
     @functools.wraps(func)
     def dtype_wrapper(image, *args, slice_by_slice: bool = False, **kwargs):
-        # Get dtype_conversion from kwargs (injected by OpenHCS dtype_config)
-        dtype_conversion = kwargs.pop('dtype_conversion', None)
-        if dtype_conversion is None:
-            dtype_conversion = DtypeConversion.PRESERVE_INPUT
+        # Get dtype_config from kwargs (injected by OpenHCS)
+        dtype_config = kwargs.pop('dtype_config')
+        # Extract the conversion mode from the config dataclass
+        dtype_conversion = dtype_config.default_dtype_conversion
 
         # Store original dtype
         original_dtype = getattr(image, "dtype", None)
