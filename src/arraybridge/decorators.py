@@ -129,7 +129,9 @@ def _get_thread_gpu_context():
 
 
 def memory_types(
-    input_type: str, output_type: str, contract: Optional[Callable[[Any], bool]] = None
+    input_type: str,
+    output_type: str,
+    contract: Optional[Any] = None,
 ) -> Callable[[F], F]:
     """
     Base decorator for declaring memory types of a function.
@@ -142,8 +144,10 @@ def memory_types(
         def wrapper(*args, **kwargs):
             result = func(*args, **kwargs)
 
-            # Apply contract validation if provided
-            if contract is not None and not contract(result):
+            # Apply output validation only when a callable contract was provided.
+            # Non-callable contracts are treated as declarative metadata such as
+            # OpenHCS ProcessingContract enums used by absorbed CellProfiler code.
+            if callable(contract) and not contract(result):
                 raise ValueError(f"Function {func.__name__} violated its output contract")
 
             return result
@@ -151,6 +155,8 @@ def memory_types(
         # Attach memory type metadata
         wrapper.input_memory_type = input_type
         wrapper.output_memory_type = output_type
+        if contract is not None and not callable(contract):
+            wrapper.__processing_contract__ = contract
 
         return wrapper
 
