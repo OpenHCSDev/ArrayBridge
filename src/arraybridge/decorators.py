@@ -58,6 +58,18 @@ class DtypeConversion(Enum):
         }
         return dtype_map.get(self, None)
 
+    @classmethod
+    def from_config(cls, dtype_config: object | None) -> "DtypeConversion":
+        """Return configured conversion for runtime, direct, and prepare calls."""
+        if dtype_config is None:
+            return cls.PRESERVE_INPUT
+        try:
+            return dtype_config.default_dtype_conversion
+        except AttributeError as exc:
+            raise TypeError(
+                "dtype_config must expose default_dtype_conversion when provided."
+            ) from exc
+
 
 # Thread-local cache for lazy-loaded GPU frameworks
 _gpu_frameworks_cache = {}
@@ -175,10 +187,10 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
     @functools.wraps(func)
     def dtype_wrapper(image, *args, slice_by_slice: bool = False, **kwargs):
 
-        # Get dtype_config from kwargs (injected by OpenHCS)
-        dtype_config = kwargs.pop("dtype_config")
-        # Extract the conversion mode from the config dataclass
-        dtype_conversion = dtype_config.default_dtype_conversion
+        # OpenHCS injects dtype_config during pipeline execution. Direct calls
+        # and prepare hooks use the same preserve-input default explicitly.
+        dtype_config = kwargs.pop("dtype_config", None)
+        dtype_conversion = DtypeConversion.from_config(dtype_config)
 
         # Store original dtype
         original_dtype = getattr(image, "dtype", None)
