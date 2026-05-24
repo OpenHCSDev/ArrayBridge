@@ -16,10 +16,13 @@ import functools
 import inspect
 import logging
 import threading
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Callable, ClassVar, Optional, TypeVar
 
 import numpy as np
+from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 
 from arraybridge.dtype_scaling import SCALING_FUNCTIONS
 from arraybridge.framework_ops import _FRAMEWORK_OPS
@@ -58,21 +61,215 @@ class DtypeConversion(Enum):
         }
         return dtype_map.get(self, None)
 
+
+class DtypeConversionConfig(ABC):
+    """Nominal dtype conversion config surface consumed by decorators."""
+
+    @property
+    @abstractmethod
+    def default_dtype_conversion(self) -> DtypeConversion:
+        """Return the dtype conversion mode for decorated function output."""
+
+
+@dataclass(frozen=True, slots=True)
+class PreserveInputDtypeConfig(DtypeConversionConfig):
+    """Direct-call dtype config for wrappers executed outside OpenHCS runtime."""
+
+    default_dtype_conversion: DtypeConversion = DtypeConversion.PRESERVE_INPUT
+
+
+PRESERVE_INPUT_DTYPE_CONFIG = PreserveInputDtypeConfig()
+
+
+class EnumValueRegistryKeyMixin:
+    """Derive AutoRegisterMeta strategy labels from enum-valued class members."""
+
+    strategy_label: ClassVar[str | None] = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        member = cls.registry_enum_member()
+        if isinstance(member, Enum) and cls.__dict__.get("strategy_label") is None:
+            cls.strategy_label = member.value
+
     @classmethod
-    def from_config(cls, dtype_config: object | None) -> "DtypeConversion":
-        """Return configured conversion for runtime, direct, and prepare calls."""
-        if dtype_config is None:
-            return cls.PRESERVE_INPUT
-        try:
-            return dtype_config.default_dtype_conversion
-        except AttributeError as exc:
-            raise TypeError(
-                "dtype_config must expose default_dtype_conversion when provided."
-            ) from exc
+    @abstractmethod
+    def registry_enum_member(cls) -> Enum | None:
+        """Return the enum member that should key this concrete strategy."""
+
+
+@dataclass(frozen=True, slots=True)
+class DtypeConversionRequest:
+    """Runtime data needed to convert one decorated function output."""
+
+    array: Any
+    original_dtype: Any
+    scale_func: Callable[[Any, Any], Any]
+
+
+class DtypeConversionRunner(
+    EnumValueRegistryKeyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered dtype conversion behavior selected by DtypeConversion."""
+
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
+
+    dtype_conversion: ClassVar[DtypeConversion | None] = None
+
+    @classmethod
+    def registry_enum_member(cls) -> Enum | None:
+        return cls.dtype_conversion
+
+    @classmethod
+    def for_dtype_conversion(
+        cls,
+        dtype_conversion: DtypeConversion,
+    ) -> "DtypeConversionRunner":
+        return cls.__registry__[dtype_conversion.value]()
+
+    @abstractmethod
+    def apply(self, request: DtypeConversionRequest) -> Any:
+        """Return output converted according to the configured dtype policy."""
+
+
+class PreserveInputDtypeConversionRunner(DtypeConversionRunner):
+    """Scale output back to the input dtype when the wrapped function changed it."""
+
+    dtype_conversion = DtypeConversion.PRESERVE_INPUT
+
+    def apply(self, request: DtypeConversionRequest) -> Any:
+        if (
+            request.original_dtype is not None
+            and request.array.dtype != request.original_dtype
+        ):
+            return request.scale_func(request.array, request.original_dtype)
+        return request.array
+
+
+class NativeOutputDtypeConversionRunner(DtypeConversionRunner):
+    """Keep the wrapped framework function's native output dtype."""
+
+    dtype_conversion = DtypeConversion.NATIVE_OUTPUT
+
+    def apply(self, request: DtypeConversionRequest) -> Any:
+        return request.array
+
+
+class FixedDtypeConversionRunner(DtypeConversionRunner):
+    """Scale output to the dtype declared by a fixed DtypeConversion member."""
+
+    def apply(self, request: DtypeConversionRequest) -> Any:
+        if self.dtype_conversion is None:
+            raise TypeError("FixedDtypeConversionRunner requires dtype_conversion.")
+        target_dtype = self.dtype_conversion.numpy_dtype
+        if target_dtype is None:
+            return request.array
+        return request.scale_func(request.array, target_dtype)
+
+
+class Uint8DtypeConversionRunner(FixedDtypeConversionRunner):
+    dtype_conversion = DtypeConversion.UINT8
+
+
+class Uint16DtypeConversionRunner(FixedDtypeConversionRunner):
+    dtype_conversion = DtypeConversion.UINT16
+
+
+class Int16DtypeConversionRunner(FixedDtypeConversionRunner):
+    dtype_conversion = DtypeConversion.INT16
+
+
+class Int32DtypeConversionRunner(FixedDtypeConversionRunner):
+    dtype_conversion = DtypeConversion.INT32
+
+
+class Float32DtypeConversionRunner(FixedDtypeConversionRunner):
+    dtype_conversion = DtypeConversion.FLOAT32
+
+
+class Float64DtypeConversionRunner(FixedDtypeConversionRunner):
+    dtype_conversion = DtypeConversion.FLOAT64
+
+
+@dataclass(frozen=True, slots=True)
+class GPUStreamRequest:
+    """Runtime context for framework stream selection."""
+
+    thread_context: "ThreadGPUContext"
+
+
+class GPUStreamStrategy(
+    EnumValueRegistryKeyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered stream selector for GPU memory frameworks."""
+
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
+
+    memory_type: ClassVar[MemoryType | None] = None
+
+    @classmethod
+    def registry_enum_member(cls) -> Enum | None:
+        return cls.memory_type
+
+    @classmethod
+    def for_memory_type(cls, memory_type: MemoryType) -> "GPUStreamStrategy":
+        strategy_type = cls.__registry__.get(memory_type.value, NoGPUStreamStrategy)
+        return strategy_type()
+
+    @abstractmethod
+    def stream(self, request: GPUStreamRequest) -> Any:
+        """Return a context-manager stream for the framework, or None."""
+
+
+class NoGPUStreamStrategy(GPUStreamStrategy):
+    """Frameworks without explicit stream support execute directly."""
+
+    def stream(self, request: GPUStreamRequest) -> Any:
+        return None
+
+
+class CupyGPUStreamStrategy(GPUStreamStrategy):
+    memory_type = MemoryType.CUPY
+
+    def stream(self, request: GPUStreamRequest) -> Any:
+        return request.thread_context.get_cupy_stream()
+
+
+class TorchGPUStreamStrategy(GPUStreamStrategy):
+    memory_type = MemoryType.TORCH
+
+    def stream(self, request: GPUStreamRequest) -> Any:
+        return request.thread_context.get_torch_stream()
 
 
 # Thread-local cache for lazy-loaded GPU frameworks
 _gpu_frameworks_cache = {}
+
+
+class KeywordOnlySignatureExtension:
+    """Insert decorator-owned keyword-only parameters in valid signature order."""
+
+    def __init__(self, signature: inspect.Signature):
+        self.signature = signature
+
+    def with_parameter(self, parameter: inspect.Parameter) -> inspect.Signature:
+        parameters = list(self.signature.parameters.values())
+        if parameter.name in self.signature.parameters:
+            return self.signature
+        insertion_index = self._insertion_index(parameters)
+        parameters.insert(insertion_index, parameter)
+        return self.signature.replace(parameters=parameters)
+
+    @staticmethod
+    def _insertion_index(parameters: list[inspect.Parameter]) -> int:
+        for index, candidate in enumerate(parameters):
+            if candidate.kind is inspect.Parameter.VAR_KEYWORD:
+                return index
+        return len(parameters)
 
 
 def _create_lazy_getter(framework_name: str):
@@ -189,8 +386,11 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
 
         # OpenHCS injects dtype_config during pipeline execution. Direct calls
         # and prepare hooks use the same preserve-input default explicitly.
-        dtype_config = kwargs.pop("dtype_config", None)
-        dtype_conversion = DtypeConversion.from_config(dtype_config)
+        dtype_config: DtypeConversionConfig = kwargs.pop(
+            "dtype_config",
+            PRESERVE_INPUT_DTYPE_CONFIG,
+        )
+        dtype_conversion = dtype_config.default_dtype_conversion
 
         # Store original dtype
         original_dtype = getattr(image, "dtype", None)
@@ -203,21 +403,15 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
             result = func(image, *args, **kwargs)
 
         def _apply_dtype_conversion(array):
-            if dtype_conversion is None or not hasattr(array, "dtype"):
+            if not hasattr(array, "dtype"):
                 return array
-            if dtype_conversion == DtypeConversion.PRESERVE_INPUT:
-                # Preserve input dtype
-                if original_dtype is not None and array.dtype != original_dtype:
-                    return scale_func(array, original_dtype)
-                return array
-            if dtype_conversion == DtypeConversion.NATIVE_OUTPUT:
-                # Return framework's native output dtype
-                return array
-            # Force specific dtype
-            target_dtype = dtype_conversion.numpy_dtype
-            if target_dtype is not None:
-                return scale_func(array, target_dtype)
-            return array
+            return DtypeConversionRunner.for_dtype_conversion(dtype_conversion).apply(
+                DtypeConversionRequest(
+                    array=array,
+                    original_dtype=original_dtype,
+                    scale_func=scale_func,
+                )
+            )
 
         try:
             # Apply dtype conversion to the main output
@@ -236,22 +430,15 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
 
     # Update function signature to include new parameters
     try:
-        original_sig = inspect.signature(func)
-        new_params = list(original_sig.parameters.values())
-
-        # Check if parameters already exist
-        param_names = [p.name for p in new_params]
-
-        # Add slice_by_slice parameter
-        if "slice_by_slice" not in param_names:
-            slice_param = inspect.Parameter(
-                "slice_by_slice", inspect.Parameter.KEYWORD_ONLY, default=False, annotation=bool
-            )
-            new_params.append(slice_param)
-
-        # Create new signature
-        new_sig = original_sig.replace(parameters=new_params)
-        dtype_wrapper.__signature__ = new_sig
+        slice_param = inspect.Parameter(
+            "slice_by_slice",
+            inspect.Parameter.KEYWORD_ONLY,
+            default=False,
+            annotation=bool,
+        )
+        dtype_wrapper.__signature__ = KeywordOnlySignatureExtension(
+            inspect.signature(func)
+        ).with_parameter(slice_param)
 
         # Update docstring
         if dtype_wrapper.__doc__:
@@ -297,12 +484,9 @@ def _create_gpu_wrapper(func, mem_type: MemoryType, oom_recovery: bool):
                 # Get thread-local context
                 ctx = _get_thread_gpu_context()
 
-                # Get stream if framework supports it
-                stream = None
-                if mem_type == MemoryType.CUPY:
-                    stream = ctx.get_cupy_stream()
-                elif mem_type == MemoryType.TORCH:
-                    stream = ctx.get_torch_stream()
+                stream = GPUStreamStrategy.for_memory_type(mem_type).stream(
+                    GPUStreamRequest(ctx)
+                )
 
                 # Define execution function that captures args/kwargs
                 def execute_with_stream():
