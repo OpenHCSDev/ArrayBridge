@@ -3,7 +3,13 @@
 import numpy as np
 import pytest
 
-from arraybridge.decorators import DtypeConversion, memory_types
+from arraybridge.decorators import (
+    DtypeConversion,
+    DtypeConversionConfig,
+    PreserveInputDtypeConfig,
+    SliceBySliceRuntimeParameter,
+    memory_types,
+)
 
 
 class TestDtypeConversion:
@@ -89,7 +95,7 @@ class TestFrameworkDecorators:
 
     def test_numpy_decorator_exists(self):
         """Test that numpy decorator is available."""
-        from arraybridge.decorators import numpy
+        from arraybridge.decorators import PreserveInputDtypeConfig, numpy
 
         assert callable(numpy)
 
@@ -135,7 +141,10 @@ class TestFrameworkDecorators:
             return arr
 
         arr = np.array([0.5, 1.0], dtype=np.float64)
-        result = identity(arr, dtype_conversion=DtypeConversion.UINT8)
+        result = identity(
+            arr,
+            dtype_config=PreserveInputDtypeConfig(DtypeConversion.UINT8),
+        )
 
         # Should convert to uint8
         assert result.dtype == np.uint8
@@ -143,7 +152,11 @@ class TestFrameworkDecorators:
 
     def test_numpy_decorator_tuple_dtype_conversion(self):
         """Test tuple output dtype conversion applies to main output only."""
-        from arraybridge.decorators import numpy
+        from arraybridge.decorators import (
+            DtypeConversionConfig,
+            SliceBySliceRuntimeParameter,
+            numpy,
+        )
 
         @numpy
         def to_float_with_meta(arr):
@@ -225,10 +238,13 @@ class TestDecoratorParameters:
         import inspect
 
         sig = inspect.signature(process_3d)
-        assert "slice_by_slice" in sig.parameters
-        assert "dtype_conversion" in sig.parameters
+        assert SliceBySliceRuntimeParameter.require_parameter_name() in sig.parameters
+        assert DtypeConversionConfig.require_parameter_name() in sig.parameters
 
         # Test with slice_by_slice=False (default)
         arr_3d = np.random.rand(3, 10, 10)
-        result = process_3d(arr_3d, slice_by_slice=False)
+        result = process_3d(
+            arr_3d,
+            **{SliceBySliceRuntimeParameter.require_parameter_name(): False},
+        )
         assert result.shape == arr_3d.shape
