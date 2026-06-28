@@ -1,9 +1,8 @@
 """
-Memory type declaration decorators for OpenHCS.
+Memory type declaration decorators.
 
 This module provides decorators for explicitly declaring the memory interface
-of pure functions, enforcing Clause 106-A (Declared Memory Types) and supporting
-memory-type-aware dispatching and orchestration.
+of pure functions and supporting memory-type-aware dispatching and orchestration.
 
 These decorators annotate functions with input_memory_type and output_memory_type
 attributes and provide automatic thread-local CUDA stream management for GPU
@@ -70,10 +69,56 @@ class DtypeConversionConfig(ABC):
     def default_dtype_conversion(self) -> DtypeConversion:
         """Return the dtype conversion mode for decorated function output."""
 
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        return "dtype_config"
+
+    @classmethod
+    def default_value(cls):
+        return PRESERVE_INPUT_DTYPE_CONFIG
+
+    @classmethod
+    def annotation_type(cls):
+        return DtypeConversionConfig
+
+    @classmethod
+    def parameter(cls) -> inspect.Parameter:
+        return inspect.Parameter(
+            cls.require_parameter_name(),
+            inspect.Parameter.KEYWORD_ONLY,
+            default=cls.default_value(),
+            annotation=cls.annotation_type(),
+        )
+
+
+class SliceBySliceRuntimeParameter:
+    """Nominal slice-by-slice execution parameter consumed by decorators."""
+
+    @classmethod
+    def require_parameter_name(cls) -> str:
+        return "slice_by_slice"
+
+    @classmethod
+    def default_value(cls) -> bool:
+        return False
+
+    @classmethod
+    def annotation_type(cls) -> type[bool]:
+        return bool
+
+    @classmethod
+    def parameter(cls) -> inspect.Parameter:
+        return inspect.Parameter(
+            cls.require_parameter_name(),
+            inspect.Parameter.KEYWORD_ONLY,
+            default=cls.default_value(),
+            annotation=cls.annotation_type(),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class PreserveInputDtypeConfig(DtypeConversionConfig):
-    """Direct-call dtype config for wrappers executed outside OpenHCS runtime."""
+    """Direct-call dtype config for wrappers executed outside a pipeline runtime."""
 
     default_dtype_conversion: DtypeConversion = DtypeConversion.PRESERVE_INPUT
 
@@ -354,8 +399,7 @@ def memory_types(
             result = func(*args, **kwargs)
 
             # Apply output validation only when a callable contract was provided.
-            # Non-callable contracts are treated as declarative metadata such as
-            # OpenHCS ProcessingContract enums used by absorbed CellProfiler code.
+            # Non-callable contracts are declarative metadata consumed by runtimes.
             if callable(contract) and not contract(result):
                 raise ValueError(f"Function {func.__name__} violated its output contract")
 
@@ -382,13 +426,17 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
     scale_func = SCALING_FUNCTIONS[mem_type.value]
 
     @functools.wraps(func)
-    def dtype_wrapper(image, *args, slice_by_slice: bool = False, **kwargs):
+    def dtype_wrapper(image, *args, **kwargs):
 
-        # OpenHCS injects dtype_config during pipeline execution. Direct calls
-        # and prepare hooks use the same preserve-input default explicitly.
+        # Pipeline runtimes may inject dtype_config; direct calls use the same
+        # preserve-input default explicitly.
+        slice_by_slice = kwargs.pop(
+            SliceBySliceRuntimeParameter.require_parameter_name(),
+            SliceBySliceRuntimeParameter.default_value(),
+        )
         dtype_config: DtypeConversionConfig = kwargs.pop(
-            "dtype_config",
-            PRESERVE_INPUT_DTYPE_CONFIG,
+            DtypeConversionConfig.require_parameter_name(),
+            DtypeConversionConfig.default_value(),
         )
         dtype_conversion = dtype_config.default_dtype_conversion
 
@@ -430,15 +478,13 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
 
     # Update function signature to include new parameters
     try:
-        slice_param = inspect.Parameter(
-            "slice_by_slice",
-            inspect.Parameter.KEYWORD_ONLY,
-            default=False,
-            annotation=bool,
-        )
-        dtype_wrapper.__signature__ = KeywordOnlySignatureExtension(
+        dtype_signature = KeywordOnlySignatureExtension(
             inspect.signature(func)
-        ).with_parameter(slice_param)
+        ).with_parameter(SliceBySliceRuntimeParameter.parameter())
+        dtype_signature = KeywordOnlySignatureExtension(
+            dtype_signature
+        ).with_parameter(DtypeConversionConfig.parameter())
+        dtype_wrapper.__signature__ = dtype_signature
 
         # Update docstring
         if dtype_wrapper.__doc__:
@@ -580,6 +626,10 @@ for mem_type in MemoryType:
 __all__ = [
     "memory_types",
     "DtypeConversion",
+    "DtypeConversionConfig",
+    "PreserveInputDtypeConfig",
+    "PRESERVE_INPUT_DTYPE_CONFIG",
+    "SliceBySliceRuntimeParameter",
     "numpy",  # noqa: F822
     "cupy",  # noqa: F822
     "torch",  # noqa: F822
