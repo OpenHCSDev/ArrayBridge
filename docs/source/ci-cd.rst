@@ -1,32 +1,25 @@
-CI/CD Documentation
-===================
+Continuous integration
+======================
 
-Please refer to the `CI/CD Documentation <https://github.com/trissim/arraybridge/blob/main/docs/ci-cd.md>`_ for detailed CI/CD information.
+The repository workflows are authoritative. The main test matrix currently
+covers Python 3.10 through 3.13 on Linux, Windows, and macOS. Separate jobs
+exercise optional GPU paths and code quality.
 
-Overview
---------
-
-arraybridge uses GitHub Actions for continuous integration and deployment:
-
-* **CI Workflow**: Runs tests across Python 3.9-3.12, multiple OS, and framework combinations
-* **Publish Workflow**: Automatically publishes to PyPI on version tags
-
-Quick Commands
---------------
-
-Run tests locally:
+Before opening a change, run:
 
 .. code-block:: bash
 
-   pytest
-   pytest --cov=arraybridge --cov-report=html
+   python -m pytest
+   ruff check src tests
+   black --check src tests
+   mypy src --ignore-missing-imports
 
-Code quality checks:
+Documentation changes should also build with warnings as errors:
 
 .. code-block:: bash
 
-   black src/ tests/
-   ruff check src/ tests/
-   mypy src/ --ignore-missing-imports
+   python -m sphinx -E -W --keep-going -b html docs/source docs/source/_build/html
 
-See the full CI/CD documentation for detailed information about workflows, test matrix, and troubleshooting.
+See the current `GitHub Actions workflows
+<https://github.com/OpenHCSDev/arraybridge/actions>`_ instead of copying a
+workflow matrix into downstream documentation.

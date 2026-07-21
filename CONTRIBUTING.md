@@ -35,7 +35,7 @@ We are committed to providing a welcoming and inclusive environment. Please be r
 
 ### Finding Issues
 
-- Check the [issue tracker](https://github.com/trissim/arraybridge/issues)
+- Check the [issue tracker](https://github.com/OpenHCSDev/arraybridge/issues)
 - Look for issues labeled `good first issue` or `help wanted`
 - Feel free to create new issues for bugs or feature requests
 
@@ -49,7 +49,7 @@ git clone https://github.com/YOUR_USERNAME/arraybridge.git
 cd arraybridge
 
 # Add upstream remote
-git remote add upstream https://github.com/trissim/arraybridge.git
+git remote add upstream https://github.com/OpenHCSDev/arraybridge.git
 ```
 
 ### 2. Create Virtual Environment
@@ -135,13 +135,11 @@ def convert_memory(data: Any, source_type: str, target_type: str, gpu_id: int) -
         MemoryConversionError: If conversion fails
 
     Example:
-        ```python
         import numpy as np
         from arraybridge import convert_memory
 
         data = np.array([1, 2, 3])
         result = convert_memory(data, "numpy", "torch", gpu_id=0)
-        ```
     """
 ```
 

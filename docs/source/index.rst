@@ -1,96 +1,33 @@
-.. arraybridge documentation master file
+arraybridge
+===========
 
-arraybridge Documentation
-=========================
-
-**Unified API for NumPy, CuPy, PyTorch, TensorFlow, JAX, and pyclesperanto**
-
-arraybridge provides a unified interface for working with multiple array/tensor frameworks,
-featuring automatic memory type conversion, declarative decorators, and zero-copy operations
-when possible.
+ArrayBridge owns explicit array-framework conversion, memory-type declarations,
+stack utilities, dtype policy, GPU stream/OOM helpers, and cleanup for scientific
+applications.
 
 .. toctree::
    :maxdepth: 2
-   :caption: Getting Started
 
    installation
    quickstart
-
-.. toctree::
-   :maxdepth: 2
-   :caption: User Documentation
-
    user_guide
    converters
    decorators
-   gpu_features
    stack_utils
+   gpu_features
    advanced_topics
-
-.. toctree::
-   :maxdepth: 2
-   :caption: API Documentation
-
    api_reference
-   api/index
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Examples
-
    examples/index
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Development
-
    contributing
    ci-cd
 
-Features
---------
-
-* **Unified API**: Single interface for 6 array/tensor frameworks
-* **Automatic Conversion**: DLPack + NumPy fallback with automatic path selection
-* **Declarative Decorators**: ``@numpy``, ``@torch``, ``@cupy`` for memory type declarations
-* **Device Management**: Thread-local GPU contexts and automatic stream management
-* **OOM Recovery**: Automatic out-of-memory detection and cache clearing
-* **Dtype Preservation**: Automatic dtype preservation across conversions
-* **Zero Dependencies**: Only requires NumPy (framework dependencies are optional)
-
-Quick Example
+Boundary rule
 -------------
 
-.. code-block:: python
+Conversion is explicit. ``convert_memory`` moves values between frameworks.
+Decorators declare callable input/output memory types and runtime policies; they
+do not perform cross-framework conversion on direct calls.
 
-   from arraybridge import convert_memory, detect_memory_type
-   import numpy as np
-
-   # Create NumPy array
-   data = np.array([[1, 2], [3, 4]])
-
-   # Convert to PyTorch (if installed)
-   torch_data = convert_memory(data, source_type='numpy', target_type='torch', gpu_id=0)
-
-   # Detect memory type
-   mem_type = detect_memory_type(torch_data)  # 'torch'
-
-Installation
-------------
-
-.. code-block:: bash
-
-   # Base installation (NumPy only)
-   pip install arraybridge
-
-   # With specific frameworks
-   pip install arraybridge[torch]
-   pip install arraybridge[cupy]
-   pip install arraybridge[all]
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+ArrayBridge does not own a host application's compiler, function catalog, or
+resource scheduler. Hosts consume the declarations and plan conversions/devices
+at their own boundary.

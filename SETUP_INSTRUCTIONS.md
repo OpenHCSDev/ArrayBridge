@@ -6,17 +6,17 @@ This document contains the manual steps needed to complete the badge and documen
 
 To display the coverage reports hosted on GitHub Pages:
 
-1. Go to: https://github.com/trissim/arraybridge/settings/pages
+1. Go to: https://github.com/OpenHCSDev/arraybridge/settings/pages
 2. Under "Build and deployment" > "Source", select **"GitHub Actions"**
 3. Save the changes
 
-Once enabled, the coverage-pages.yml workflow will deploy coverage reports to https://trissim.github.io/arraybridge/coverage/
+Once enabled, the coverage-pages.yml workflow will deploy coverage reports to https://openhcsdev.github.io/arraybridge/coverage/
 
 ## 2. Update Repository Description
 
 To add the ReadTheDocs link to the repository description:
 
-1. Go to: https://github.com/trissim/arraybridge
+1. Go to: https://github.com/OpenHCSDev/arraybridge
 2. Click the gear icon (⚙️) next to "About" on the right side
 3. In the "Website" field, enter: `https://arraybridge.readthedocs.io`
 4. Optionally add topics/tags to improve discoverability
@@ -55,7 +55,7 @@ After merging this PR to main:
 The following badges have been added to README.md:
 
 - **ReadTheDocs**: `[![Documentation Status](https://readthedocs.org/projects/arraybridge/badge/?version=latest)](https://arraybridge.readthedocs.io/en/latest/?badge=latest)`
-- **Coverage**: `[![Coverage](https://raw.githubusercontent.com/trissim/arraybridge/main/.github/badges/coverage.svg)](https://trissim.github.io/arraybridge/coverage/)`
+- **Coverage**: `[![Coverage](https://raw.githubusercontent.com/OpenHCSDev/arraybridge/main/.github/badges/coverage.svg)](https://openhcsdev.github.io/arraybridge/coverage/)`
 
 ## Notes
 

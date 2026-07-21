@@ -99,13 +99,15 @@ converter = MemoryType.MXNET.converter
 class MxnetConverter(MemoryTypeConverter):
     def to_numpy(self, data, gpu_id):
         return data.asnumpy()
+
     def from_numpy(self, data, gpu_id):
         return mxnet.nd.array(data)
+
     def to_torch(self, data, gpu_id):
-        # ... manual implementation
+        raise NotImplementedError
+
     def to_cupy(self, data, gpu_id):
-        # ... manual implementation
-    # ... 6+ more methods
+        raise NotImplementedError
 
 # Had to manually register
 _CONVERTERS[MemoryType.MXNET] = MxnetConverter()
@@ -113,8 +115,10 @@ _CONVERTERS[MemoryType.MXNET] = MxnetConverter()
 
 ### After (Auto-registration - New System)
 ```python
-# Just add to enum and config - everything else is automatic!
-MemoryType.MXNET = "mxnet"
+# Add one enum member and one config entry; everything else is automatic.
+class MemoryType(Enum):
+    # Existing members omitted.
+    MXNET = "mxnet"
 
 _FRAMEWORK_CONFIG[MemoryType.MXNET] = {
     'conversion_ops': {
@@ -160,7 +164,7 @@ def test_convert_numpy_to_mxnet(self, mxnet_available):
 
 ### GPU Framework with DLPack
 ```python
-'conversion_ops': {
+conversion_ops = {
     'to_numpy': 'data.cpu().numpy()',
     'from_numpy': '{mod}.from_numpy(data).to(device=gpu_id)',
     'from_dlpack': '{mod}.from_dlpack(data)',
@@ -170,7 +174,7 @@ def test_convert_numpy_to_mxnet(self, mxnet_available):
 
 ### CPU-only Framework
 ```python
-'conversion_ops': {
+conversion_ops = {
     'to_numpy': 'np.array(data)',
     'from_numpy': '{mod}.array(data)',
     'from_dlpack': None,  # Not supported

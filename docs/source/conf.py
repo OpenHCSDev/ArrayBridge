@@ -5,7 +5,16 @@
 
 import os
 import sys
-sys.path.insert(0, os.path.abspath('../../src'))
+from pathlib import Path
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+EXTERNAL_ROOT = PACKAGE_ROOT.parent
+
+# Prefer the sibling owner source when ArrayBridge is documented from the
+# OpenHCS checkout; an installed metaclass-registry remains the standalone
+# fallback when that sibling is absent.
+sys.path.insert(0, str(EXTERNAL_ROOT / "metaclass-registry" / "src"))
+sys.path.insert(0, str(PACKAGE_ROOT / "src"))
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
@@ -13,7 +22,7 @@ sys.path.insert(0, os.path.abspath('../../src'))
 project = 'arraybridge'
 copyright = '2025, Tristan Simas'
 author = 'Tristan Simas'
-release = '0.1.0'
+release = '0.2.9'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -29,13 +38,13 @@ extensions = [
 ]
 
 templates_path = ['_templates']
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', 'api/**']
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = 'sphinx_rtd_theme'
-html_static_path = ['_static']
+html_static_path = []
 
 # -- Extension configuration -------------------------------------------------
 
@@ -114,7 +123,6 @@ html_theme_options = {
     'sticky_navigation': True,
     'includehidden': True,
     'titles_only': False,
-    'display_version': True,
     'prev_next_buttons_location': 'both',
     'style_external_links': False,
 }

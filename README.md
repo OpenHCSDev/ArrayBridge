@@ -1,175 +1,70 @@
 # arraybridge
 
-**Unified API for NumPy, CuPy, PyTorch, TensorFlow, JAX, and pyclesperanto**
+ArrayBridge provides explicit conversion and shared lifecycle utilities for
+NumPy, CuPy, PyTorch, TensorFlow, JAX, and pyclesperanto arrays.
 
-[![PyPI version](https://badge.fury.io/py/arraybridge.svg)](https://badge.fury.io/py/arraybridge)
-[![Documentation Status](https://readthedocs.org/projects/arraybridge/badge/?version=latest)](https://arraybridge.readthedocs.io/en/latest/?badge=latest)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Coverage](https://raw.githubusercontent.com/trissim/arraybridge/main/.github/badges/coverage.svg)](https://trissim.github.io/arraybridge/coverage/)
+Core dependencies are NumPy and metaclass-registry. Other frameworks are
+optional.
 
-## Features
-
-- **Unified API**: Single interface for 6 array/tensor frameworks
-- **Automatic Conversion**: DLPack + NumPy fallback with automatic path selection
-- **Declarative Decorators**: `@numpy`, `@torch`, `@cupy` for memory type declarations
-- **Device Management**: Thread-local GPU contexts and automatic stream management
-- **OOM Recovery**: Automatic out-of-memory detection and cache clearing
-- **Dtype Preservation**: Automatic dtype preservation across conversions
-- **Zero Dependencies**: Only requires NumPy (framework dependencies are optional)
-
-## Quick Start
+## Quick start
 
 ```python
-from arraybridge import convert_memory, detect_memory_type
 import numpy as np
 
-# Create NumPy array
-data = np.array([[1, 2], [3, 4]])
+from arraybridge import convert_memory, detect_memory_type
 
-# Convert to PyTorch (if installed)
-torch_data = convert_memory(data, source_type='numpy', target_type='torch', gpu_id=0)
+value = np.arange(6).reshape(2, 3)
+assert detect_memory_type(value) == "numpy"
 
-# Detect memory type
-mem_type = detect_memory_type(torch_data)  # 'torch'
+copy = convert_memory(
+    value,
+    source_type="numpy",
+    target_type="numpy",
+    gpu_id=0,
+)
 ```
 
-## Declarative Decorators
+`convert_memory` requires the declared source type, target type, and device id.
+It uses the registered converter for the source framework. The device id is
+required even for CPU conversions so call sites have one stable signature.
+
+## Declarative decorators
 
 ```python
-from arraybridge import numpy, torch, cupy
+from arraybridge import numpy
 
-@torch(input_type='numpy', output_type='torch', oom_recovery=True)
-def my_gpu_function(data):
-    """Automatically converts input from NumPy to PyTorch."""
-    return data * 2
-
-# Use with NumPy input
-result = my_gpu_function(np.array([1, 2, 3]))  # Returns PyTorch tensor
+@numpy
+def normalize(image):
+    return image / max(float(image.max()), 1.0)
 ```
+
+The framework decorators attach `input_memory_type` and `output_memory_type`
+metadata, provide dtype/slice runtime parameters, and add framework-specific
+stream/OOM handling where supported. They do **not** convert inputs or outputs
+between frameworks and do not accept a `gpu_id` argument. A host runtime must
+call `convert_memory` at the boundary it plans.
+
+## Stack utilities
+
+```python
+import numpy as np
+
+from arraybridge import stack_slices, unstack_slices
+
+slices = [np.zeros((8, 8)), np.ones((8, 8))]
+stack = stack_slices(slices, memory_type="numpy", gpu_id=0)
+restored = unstack_slices(stack, memory_type="numpy", gpu_id=0)
+```
+
+`stack_slices` requires non-empty 2D inputs. `unstack_slices` requires a 3D
+array. Both validate shape and use explicit target memory/device declarations.
 
 ## Installation
 
 ```bash
-# Base installation (NumPy only)
 pip install arraybridge
-
-# With specific frameworks
-pip install arraybridge[torch]
-pip install arraybridge[cupy]
-pip install arraybridge[tensorflow]
-pip install arraybridge[jax]
-pip install arraybridge[pyclesperanto]
-
-# With all frameworks
-pip install arraybridge[all]
+pip install "arraybridge[torch]"
+pip install "arraybridge[cupy]"
 ```
 
-## Supported Frameworks
-
-| Framework | CPU | GPU | DLPack | Notes |
-|-----------|-----|-----|--------|-------|
-| NumPy | ✅ | ❌ | ❌ | Base framework |
-| CuPy | ❌ | ✅ | ✅ | CUDA arrays |
-| PyTorch | ✅ | ✅ | ✅ | Tensors |
-| TensorFlow | ✅ | ✅ | ✅ | Tensors |
-| JAX | ✅ | ✅ | ✅ | Arrays |
-| pyclesperanto | ❌ | ✅ | ❌ | OpenCL arrays |
-
-## Why arraybridge?
-
-**Before** (Manual conversion hell):
-```python
-import numpy as np
-import torch
-import cupy as cp
-
-def process_data(data, target='torch'):
-    if target == 'torch':
-        if isinstance(data, np.ndarray):
-            return torch.from_numpy(data).cuda()
-        elif isinstance(data, cp.ndarray):
-            return torch.as_tensor(data, device='cuda')
-    elif target == 'cupy':
-        if isinstance(data, np.ndarray):
-            return cp.asarray(data)
-        elif hasattr(data, '__cuda_array_interface__'):
-            return cp.asarray(data)
-    # ... 30 more lines of if/elif ...
-```
-
-**After** (arraybridge):
-```python
-from arraybridge import convert_memory, detect_memory_type
-
-def process_data(data, target='torch'):
-    source = detect_memory_type(data)
-    return convert_memory(data, source_type=source, target_type=target, gpu_id=0)
-```
-
-## Advanced Features
-
-### Thread-Local GPU Streams
-
-```python
-from arraybridge import torch
-
-@torch(oom_recovery=True)
-def parallel_processing(data):
-    # Automatically uses thread-local CUDA stream
-    # Enables true parallelization across threads
-    return data * 2
-```
-
-### OOM Recovery
-
-```python
-from arraybridge import cupy
-
-@cupy(oom_recovery=True)
-def memory_intensive_operation(data):
-    # Automatically catches OOM errors
-    # Clears GPU cache and retries
-    return data @ data.T
-```
-
-### Stack Utilities
-
-```python
-from arraybridge import stack_slices, unstack_slices
-
-# Stack 2D slices into 3D array
-slices_2d = [np.random.rand(100, 100) for _ in range(50)]
-volume_3d = stack_slices(slices_2d, memory_type='torch', gpu_id=0)
-
-# Unstack 3D array into 2D slices
-slices_back = unstack_slices(volume_3d, memory_type='torch', gpu_id=0)
-```
-
-## Documentation
-
-Full documentation available at [arraybridge.readthedocs.io](https://arraybridge.readthedocs.io)
-
-## Performance
-
-arraybridge uses DLPack for zero-copy conversions when possible:
-
-| Conversion | Method | Speed |
-|------------|--------|-------|
-| NumPy → PyTorch | `torch.from_numpy()` | Zero-copy |
-| PyTorch → CuPy | DLPack | Zero-copy |
-| CuPy → JAX | DLPack | Zero-copy |
-| NumPy → CuPy | Copy | Fast |
-| PyTorch → NumPy | `.numpy()` | Zero-copy (CPU) |
-
-## License
-
-MIT License - see LICENSE file for details
-
-## Contributing
-
-Contributions welcome! Please see CONTRIBUTING.md for guidelines.
-
-## Credits
-
-Developed by Tristan Simas as part of the OpenHCS project.
+Documentation: <https://arraybridge.readthedocs.io>
