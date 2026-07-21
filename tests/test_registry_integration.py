@@ -42,13 +42,14 @@ class TestRegistryIntegration:
 
     def test_memory_type_enum_integration(self):
         """Test that MemoryType enum integrates seamlessly with registry."""
+        from arraybridge.converters_registry import get_converter
         from arraybridge.types import MemoryType
 
         np.array([1, 2, 3, 4, 5])
 
-        # Can use MemoryType enum to get converter
+        # The enum declares identity; the registry owns converter resolution.
         for mem_type in MemoryType:
-            converter = mem_type.converter
+            converter = get_converter(mem_type.value)
             assert converter.memory_type == mem_type.value
 
     def test_convert_memory_uses_registry(self):

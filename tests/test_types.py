@@ -63,19 +63,9 @@ class TestMemoryType:
 
 
 class TestMemoryTypeConverter:
-    """Tests for MemoryType converter property."""
+    """Tests that MemoryType remains a declaration-only identity enum."""
 
-    def test_converter_property_exists(self):
-        """Test that converter property exists on MemoryType."""
-        # The converter property should exist
-        assert hasattr(MemoryType.NUMPY, "converter")
-
-    def test_conversion_methods_exist(self):
-        """Test that to_X() methods are added to MemoryType."""
-        # Check that conversion methods exist for all memory types
-        assert hasattr(MemoryType.NUMPY, "to_numpy")
-        assert hasattr(MemoryType.NUMPY, "to_torch")
-        assert hasattr(MemoryType.NUMPY, "to_cupy")
-        assert hasattr(MemoryType.NUMPY, "to_tensorflow")
-        assert hasattr(MemoryType.NUMPY, "to_jax")
-        assert hasattr(MemoryType.NUMPY, "to_pyclesperanto")
+    def test_converter_dispatch_is_not_mirrored_on_enum_members(self):
+        """Converter behavior belongs to ConverterBase registry leaves."""
+        assert not hasattr(MemoryType.NUMPY, "converter")
+        assert not hasattr(MemoryType.NUMPY, "to_numpy")

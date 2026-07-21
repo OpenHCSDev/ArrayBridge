@@ -128,22 +128,24 @@ class TestConverterRegistry:
         assert isinstance(converter1, type(converter2))
 
 
-class TestMemoryTypeConverterProperty:
-    """Tests for MemoryType.converter property using registry."""
+class TestMemoryTypeRegistryResolution:
+    """Tests that nominal memory types resolve through the registry owner."""
 
-    def test_memory_type_converter_property_uses_registry(self):
-        """Test that MemoryType.converter uses the registry."""
+    def test_memory_type_value_resolves_through_registry(self):
+        """Registry lookup accepts the nominal enum value."""
+        from arraybridge.converters_registry import get_converter
         from arraybridge.types import MemoryType
 
-        numpy_converter = MemoryType.NUMPY.converter
+        numpy_converter = get_converter(MemoryType.NUMPY.value)
         assert numpy_converter is not None
         assert numpy_converter.memory_type == "numpy"
 
-    def test_converter_property_for_all_types(self):
-        """Test that converter property works for all memory types."""
+    def test_registry_resolves_all_nominal_memory_types(self):
+        """Every declared memory type has one registered converter owner."""
+        from arraybridge.converters_registry import get_converter
         from arraybridge.types import MemoryType
 
         for mem_type in MemoryType:
-            converter = mem_type.converter
+            converter = get_converter(mem_type.value)
             assert converter is not None
             assert converter.memory_type == mem_type.value
