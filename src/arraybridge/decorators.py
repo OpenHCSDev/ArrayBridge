@@ -489,10 +489,13 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
         # Update docstring
         if dtype_wrapper.__doc__:
             dtype_wrapper.__doc__ += (
-                f"\n\n    Additional Parameters " f"(added by {mem_type.value} decorator):\n"
+                "\n\n    Additional Parameters\n"
+                "    ---------------------\n"
             )
             dtype_wrapper.__doc__ += (
-                "        slice_by_slice (bool, optional): " "Process 3D arrays slice-by-slice.\n"
+                "        slice_by_slice : bool, optional\n"
+                f"            Added by the {mem_type.value} memory decorator. "
+                "Process 3D arrays slice-by-slice.\n"
             )
             dtype_wrapper.__doc__ += (
                 "            Defaults to False. " "Prevents cross-slice contamination.\n"
