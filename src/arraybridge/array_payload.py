@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-
 ArrayPayloadT = TypeVar("ArrayPayloadT", bound="ArrayPayload")
 
 
@@ -25,4 +24,8 @@ class ArrayPayload(ABC):
     ) -> ArrayPayloadT:
         """Apply one array transform while preserving the payload container."""
 
-        return self.with_data(transform(self.array_payload_data()))
+        current_data = self.array_payload_data()
+        transformed_data = transform(current_data)
+        if transformed_data is current_data:
+            return self
+        return self.with_data(transformed_data)

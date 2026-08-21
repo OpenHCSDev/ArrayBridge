@@ -420,6 +420,17 @@ class TestFrameworkDecorators:
         assert result.data.dtype == np.float32
         np.testing.assert_array_equal(result.data, [0, 1, 2])
 
+        unchanged_payload = ContextPayload(
+            data=np.zeros(3, dtype=np.float32),
+            context="source-plane-3",
+        )
+
+        @numpy
+        def unchanged(_image):
+            return unchanged_payload
+
+        assert unchanged(np.zeros(3, dtype=np.float32)) is unchanged_payload
+
     def test_cupy_decorator_exists(self):
         """Test that cupy decorator is available."""
         from arraybridge.decorators import cupy
