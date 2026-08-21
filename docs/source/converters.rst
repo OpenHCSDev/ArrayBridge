@@ -8,10 +8,20 @@ registered for ``source_type`` and invokes its target method.
 
    import numpy as np
 
-   from arraybridge import convert_memory
+   from arraybridge import MemoryType, convert_memory
 
    value = np.arange(4)
-   result = convert_memory(value, "numpy", "numpy", 0)
+   result = convert_memory(
+       value,
+       MemoryType.NUMPY,
+       MemoryType.NUMPY,
+       0,
+   )
+
+Both ``source_type`` and ``target_type`` accept either the canonical
+``MemoryType`` member or its string value. Decorators normalize the same
+members to string metadata at declaration time, so callable contracts and
+conversion plans share one taxonomy without carrying duplicate enum classes.
 
 Call ``detect_memory_type`` when the source type is not already known. Passing a
 wrong source declaration is a caller error; conversion planning should keep the

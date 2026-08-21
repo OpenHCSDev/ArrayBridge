@@ -6,10 +6,15 @@ import numpy as np
 
 from arraybridge.converters_registry import get_converter
 from arraybridge.framework_config import _FRAMEWORK_CONFIG
-from arraybridge.types import MemoryType, VALID_MEMORY_TYPES
+from arraybridge.types import VALID_MEMORY_TYPES, MemoryType
 
 
-def convert_memory(data: Any, source_type: str, target_type: str, gpu_id: int) -> Any:
+def convert_memory(
+    data: Any,
+    source_type: str | MemoryType,
+    target_type: str | MemoryType,
+    gpu_id: int,
+) -> Any:
     """
     Convert data between memory types using the unified converter infrastructure.
 
@@ -26,15 +31,15 @@ def convert_memory(data: Any, source_type: str, target_type: str, gpu_id: int) -
         ValueError: If source_type or target_type is invalid
         MemoryConversionError: If conversion fails
     """
-    if isinstance(target_type, MemoryType):
-        target_type = target_type.value
-    if target_type not in VALID_MEMORY_TYPES:
+    source_name = source_type.value if isinstance(source_type, MemoryType) else source_type
+    target_name = target_type.value if isinstance(target_type, MemoryType) else target_type
+    if target_name not in VALID_MEMORY_TYPES:
         raise ValueError(
-            f"Invalid target_type '{target_type}'. Available types: {sorted(VALID_MEMORY_TYPES)}"
+            f"Invalid target_type '{target_name}'. Available types: {sorted(VALID_MEMORY_TYPES)}"
         )
 
-    converter = get_converter(source_type)  # Will raise ValueError if invalid
-    method = getattr(converter, f"to_{target_type}")
+    converter = get_converter(source_name)  # Will raise ValueError if invalid
+    method = getattr(converter, f"to_{target_name}")
     return method(data, gpu_id)
 
 

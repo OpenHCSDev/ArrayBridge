@@ -16,9 +16,10 @@ import inspect
 import logging
 import threading
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, ClassVar, Optional, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
@@ -185,10 +186,7 @@ class PreserveInputDtypeConversionRunner(DtypeConversionRunner):
     dtype_conversion = DtypeConversion.PRESERVE_INPUT
 
     def apply(self, request: DtypeConversionRequest) -> Any:
-        if (
-            request.original_dtype is not None
-            and request.array.dtype != request.original_dtype
-        ):
+        if request.original_dtype is not None and request.array.dtype != request.original_dtype:
             return request.scale_func(request.array, request.original_dtype)
         return request.array
 
@@ -325,8 +323,7 @@ def _create_lazy_getter(framework_name: str):
             _gpu_frameworks_cache[framework_name] = optional_import(framework_name)
             if _gpu_frameworks_cache[framework_name] is not None:
                 logger.debug(
-                    f"🔧 Lazy imported {framework_name} in thread "
-                    f"{threading.current_thread().name}"
+                    f"🔧 Lazy imported {framework_name} in thread {threading.current_thread().name}"
                 )
         return _gpu_frameworks_cache[framework_name]
 
@@ -370,7 +367,7 @@ class ThreadGPUContext:
             if torch is not None and hasattr(torch, "cuda") and torch.cuda.is_available():
                 self.torch_stream = torch.cuda.Stream()
                 logger.debug(
-                    f"🔧 Created PyTorch stream for thread " f"{threading.current_thread().name}"
+                    f"🔧 Created PyTorch stream for thread {threading.current_thread().name}"
                 )
         return self.torch_stream
 
@@ -383,15 +380,18 @@ def _get_thread_gpu_context():
 
 
 def memory_types(
-    input_type: str,
-    output_type: str,
-    contract: Optional[Any] = None,
+    input_type: str | MemoryType,
+    output_type: str | MemoryType,
+    contract: Any | None = None,
 ) -> Callable[[F], F]:
     """
     Base decorator for declaring memory types of a function.
 
     This is the foundation decorator that all memory-type-specific decorators build upon.
     """
+
+    input_memory_type = MemoryType(input_type).value
+    output_memory_type = MemoryType(output_type).value
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
@@ -406,8 +406,8 @@ def memory_types(
             return result
 
         # Attach memory type metadata
-        wrapper.input_memory_type = input_type
-        wrapper.output_memory_type = output_type
+        wrapper.input_memory_type = input_memory_type
+        wrapper.output_memory_type = output_memory_type
         if contract is not None and not callable(contract):
             wrapper.__processing_contract__ = contract
 
@@ -427,7 +427,6 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
 
     @functools.wraps(func)
     def dtype_wrapper(image, *args, **kwargs):
-
         # Pipeline runtimes may inject dtype_config; direct calls use the same
         # preserve-input default explicitly.
         slice_by_slice = kwargs.pop(
@@ -471,34 +470,31 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
             return _apply_dtype_conversion(result)
         except Exception as e:
             logger.error(
-                f"Error in {mem_type.value} dtype/slice preserving wrapper " f"for {func_name}: {e}"
+                f"Error in {mem_type.value} dtype/slice preserving wrapper for {func_name}: {e}"
             )
             # Return unmodified result on conversion errors
             return result
 
     # Update function signature to include new parameters
     try:
-        dtype_signature = KeywordOnlySignatureExtension(
-            inspect.signature(func)
-        ).with_parameter(SliceBySliceRuntimeParameter.parameter())
-        dtype_signature = KeywordOnlySignatureExtension(
-            dtype_signature
-        ).with_parameter(DtypeConversionConfig.parameter())
+        dtype_signature = KeywordOnlySignatureExtension(inspect.signature(func)).with_parameter(
+            SliceBySliceRuntimeParameter.parameter()
+        )
+        dtype_signature = KeywordOnlySignatureExtension(dtype_signature).with_parameter(
+            DtypeConversionConfig.parameter()
+        )
         dtype_wrapper.__signature__ = dtype_signature
 
         # Update docstring
         if dtype_wrapper.__doc__:
-            dtype_wrapper.__doc__ += (
-                "\n\n    Additional Parameters\n"
-                "    ---------------------\n"
-            )
+            dtype_wrapper.__doc__ += "\n\n    Additional Parameters\n    ---------------------\n"
             dtype_wrapper.__doc__ += (
                 "        slice_by_slice : bool, optional\n"
                 f"            Added by the {mem_type.value} memory decorator. "
                 "Process 3D arrays slice-by-slice.\n"
             )
             dtype_wrapper.__doc__ += (
-                "            Defaults to False. " "Prevents cross-slice contamination.\n"
+                "            Defaults to False. Prevents cross-slice contamination.\n"
             )
 
     except Exception as e:
@@ -533,9 +529,7 @@ def _create_gpu_wrapper(func, mem_type: MemoryType, oom_recovery: bool):
                 # Get thread-local context
                 ctx = _get_thread_gpu_context()
 
-                stream = GPUStreamStrategy.for_memory_type(mem_type).stream(
-                    GPUStreamRequest(ctx)
-                )
+                stream = GPUStreamStrategy.for_memory_type(mem_type).stream(GPUStreamRequest(ctx))
 
                 # Define execution function that captures args/kwargs
                 def execute_with_stream():

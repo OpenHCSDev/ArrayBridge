@@ -26,10 +26,10 @@ Framework names
 
 The public conversion and stack APIs use string values: ``numpy``, ``cupy``,
 ``torch``, ``tensorflow``, ``jax``, and ``pyclesperanto``. ``convert_memory``
-also accepts a ``MemoryType`` member for ``target_type``, but callers should
-prefer strings consistently because ``source_type`` and stack utilities require
-them. Availability depends on optional dependencies and hardware. ArrayBridge
-never silently substitutes a different framework for an invalid target.
+accepts the canonical ``MemoryType`` member at both its source and target
+boundaries. Availability depends on optional dependencies and hardware.
+ArrayBridge never silently substitutes a different framework for an invalid
+target.
 
 Applications should carry these values through typed configuration or plans,
 not infer them from function names.

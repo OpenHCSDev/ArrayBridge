@@ -9,6 +9,7 @@ function for registry lookups.
 import logging
 from abc import abstractmethod
 
+import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
 from arraybridge.framework_config import _FRAMEWORK_CONFIG
@@ -25,7 +26,8 @@ class ConverterBase(metaclass=AutoRegisterMeta):
     """
 
     __registry_key__ = "memory_type"
-    __registry__ = {}  # Simple dict - no lazy discovery needed (converters created dynamically below)
+    # Simple dict: converters are created in this module, without lazy discovery.
+    __registry__ = {}
     memory_type: str = None
 
     @abstractmethod
@@ -67,7 +69,10 @@ def _make_lambda_with_name(expr_str, mem_type, method_name):
     """
     module_str = f'_ensure_module("{mem_type.value}")'
     lambda_expr = f"lambda self, data, gpu_id: {expr_str.format(mod=module_str)}"
-    lambda_func = eval(lambda_expr)
+    lambda_func = eval(
+        lambda_expr,
+        {"_ensure_module": _ensure_module, "np": np},
+    )
     lambda_func.__name__ = method_name
     lambda_func.__qualname__ = f"{mem_type.value.capitalize()}Converter.{method_name}"
     return lambda_func

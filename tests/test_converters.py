@@ -69,6 +69,20 @@ class TestConvertMemory:
         assert isinstance(result, np.ndarray)
         np.testing.assert_array_equal(result, arr)
 
+    def test_convert_accepts_canonical_memory_type_members(self):
+        """Both conversion boundaries accept the owner taxonomy directly."""
+
+        arr = np.array([1, 2, 3, 4, 5])
+
+        result = convert_memory(
+            arr,
+            source_type=MemoryType.NUMPY,
+            target_type=MemoryType.NUMPY,
+            gpu_id=0,
+        )
+
+        np.testing.assert_array_equal(result, arr)
+
     def test_convert_preserves_data(self):
         """Test that conversion preserves data values."""
         arr = np.array([[1.5, 2.5], [3.5, 4.5]], dtype=np.float32)
@@ -115,6 +129,25 @@ class TestConvertMemory:
 
         assert isinstance(result, np.ndarray)
         np.testing.assert_array_almost_equal(result, tensor.cpu().numpy())
+
+    @pytest.mark.jax
+    def test_convert_jax_to_numpy(self, jax_available):
+        """JAX conversion resolves NumPy through the converter environment."""
+        if not jax_available:
+            pytest.skip("JAX not available")
+
+        import jax.numpy as jnp
+
+        array = jnp.asarray([1.0, 2.0, 3.0], dtype=jnp.float32)
+        result = convert_memory(
+            array,
+            source_type=MemoryType.JAX,
+            target_type=MemoryType.NUMPY,
+            gpu_id=0,
+        )
+
+        assert isinstance(result, np.ndarray)
+        np.testing.assert_array_equal(result, np.asarray(array))
 
     def test_convert_2d_arrays(self):
         """Test converting 2D arrays."""

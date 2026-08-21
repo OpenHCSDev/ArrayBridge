@@ -10,6 +10,7 @@ from arraybridge.decorators import (
     SliceBySliceRuntimeParameter,
     memory_types,
 )
+from arraybridge.types import MemoryType
 
 
 class TestDtypeConversion:
@@ -76,6 +77,14 @@ class TestMemoryTypesDecorator:
         with pytest.raises(ValueError, match="violated its output contract"):
             test_func(-1)
 
+    def test_memory_types_normalizes_owner_enum_members(self):
+        @memory_types(MemoryType.NUMPY, MemoryType.TORCH)
+        def test_func(x):
+            return x
+
+        assert test_func.input_memory_type == "numpy"
+        assert test_func.output_memory_type == "torch"
+
     def test_memory_types_preserves_function_metadata(self):
         """Test that memory_types preserves function name, docstring, etc."""
 
@@ -95,7 +104,7 @@ class TestFrameworkDecorators:
 
     def test_numpy_decorator_exists(self):
         """Test that numpy decorator is available."""
-        from arraybridge.decorators import PreserveInputDtypeConfig, numpy
+        from arraybridge.decorators import numpy
 
         assert callable(numpy)
 
@@ -153,8 +162,6 @@ class TestFrameworkDecorators:
     def test_numpy_decorator_tuple_dtype_conversion(self):
         """Test tuple output dtype conversion applies to main output only."""
         from arraybridge.decorators import (
-            DtypeConversionConfig,
-            SliceBySliceRuntimeParameter,
             numpy,
         )
 
