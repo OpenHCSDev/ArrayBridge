@@ -31,7 +31,7 @@ def _dtype_name(dtype: Any) -> str:
 
 
 def _numpy_dtype_name(dtype: Any) -> str:
-    return np.dtype(dtype).name
+    return str(np.dtype(dtype).name)
 
 
 def _torch_dtype_name(dtype: Any) -> str:
@@ -40,7 +40,7 @@ def _torch_dtype_name(dtype: Any) -> str:
 
 def _tensorflow_dtype_name(dtype: Any) -> str:
     numpy_dtype = getattr(dtype, "as_numpy_dtype", dtype)
-    return np.dtype(numpy_dtype).name
+    return str(np.dtype(numpy_dtype).name)
 
 
 def _scaled_values(result: Any, result_min: Any, result_max: Any, target_dtype: Any) -> Any:
