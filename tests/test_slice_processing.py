@@ -83,9 +83,11 @@ class TestProcessSlices:
         np.testing.assert_array_equal(result, expected)
 
     def test_process_slices_empty_special_outputs(self):
-        """Test process_slices when some slices return no special outputs."""
+        """Reject a tuple/non-tuple result boundary between slices."""
 
-        np.array([[[1]], [[2]]])
+        from arraybridge.slice_processing import process_slices
+
+        image_3d = np.array([[[1]], [[2]]])
 
         # Mix of single output and tuple output
         def mixed_func(slice_2d):
@@ -94,9 +96,31 @@ class TestProcessSlices:
             else:  # Second slice
                 return slice_2d * 3
 
-        # This should work but might be complex; for now, assume consistent return types
-        # In practice, functions should be consistent
-        pass  # Skip this test as it requires more complex logic
+        with pytest.raises(TypeError, match="mix tuple and non-tuple"):
+            process_slices(image_3d, mixed_func, (), {})
+
+    def test_process_slices_rejects_result_tuple_arity_drift(self):
+        """Reject side-output cardinality changes between slices."""
+
+        from arraybridge.slice_processing import process_slices
+
+        image_3d = np.array([[[1]], [[2]]])
+
+        def drifting_func(slice_2d):
+            if np.sum(slice_2d) == 1:
+                return slice_2d, "first"
+            return slice_2d, "second", "surplus"
+
+        with pytest.raises(ValueError, match="same arity"):
+            process_slices(image_3d, drifting_func, (), {})
+
+    def test_process_slices_rejects_empty_result_tuple(self):
+        """Reject a tuple that has no declared main output."""
+
+        from arraybridge.slice_processing import process_slices
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            process_slices(np.ones((1, 1, 1)), lambda _slice: (), (), {})
 
     @pytest.mark.parametrize(
         "shape",
