@@ -27,6 +27,11 @@ metadata, add keyword-only ``slice_by_slice`` and ``dtype_config`` runtime
 parameters, apply the selected dtype policy, and wrap supported GPU frameworks
 with thread-local stream/OOM handling.
 
+Framework helpers also attach ``execution_memory_type``. It identifies the
+framework that owns the function body even when ``input_type`` or
+``output_type`` is overridden. Host runtimes use that declaration when scoping
+callable execution; boundary types alone do not prove execution ownership.
+
 The decorator does not accept ``gpu_id`` or ``clear_cuda_cache``. Device
 selection belongs to explicit conversion or the host runtime. A non-callable
 ``contract`` is stored as declarative metadata; a callable contract validates

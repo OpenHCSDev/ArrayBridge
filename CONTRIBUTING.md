@@ -332,35 +332,48 @@ git push origin feature/your-feature-name
 
 ### 1. Update Version
 
-Edit `pyproject.toml`:
+Update all three validated version projections with the side-effect-free helper:
 
-```toml
-[project]
-version = "0.2.0"
+```bash
+python scripts/update_version.py 0.3.0
 ```
+
+Review the package, project, and documentation changes, then run
+`python scripts/verify_release_ready.py --allow-dirty` before committing.
 
 ### 2. Update Changelog
 
 Add release notes to `CHANGELOG.md` (if exists) or create GitHub release notes.
 
-### 3. Create Tag
+### 3. Validate, Commit, and Push
 
 ```bash
-# Ensure you're on main branch
-git checkout main
-git pull upstream main
-
-# Create and push tag
-git tag -a v0.2.0 -m "Release version 0.2.0"
-git push upstream v0.2.0
+ruff check src tests scripts
+black --check src scripts
+mypy src --ignore-missing-imports
+pytest
+python -m sphinx -E -W --keep-going -b html docs/source /tmp/arraybridge-docs
+git commit
+git push origin HEAD:main
 ```
 
-### 4. Automated Publishing
+### 4. Create the Release Tag
+
+After the pushed commit is exactly `origin/main`, run:
+
+```bash
+python scripts/release.py
+```
+
+The script validates the clean published commit, confirms the PyPI version, and
+pushes the matching annotated tag.
+
+### 5. Automated Publishing
 
 GitHub Actions will automatically:
-1. Build the package
-2. Create GitHub release
-3. Publish to PyPI
+1. verify the tag, source, tests, and package metadata;
+2. publish to PyPI;
+3. create the GitHub release.
 
 ## Development Guidelines
 
@@ -391,12 +404,14 @@ GitHub Actions will automatically:
 
 To add support for a new framework:
 
-1. Update `MemoryType` enum in `types.py`
-2. Add framework config in `framework_config.py`
-3. Implement converter in `conversion_helpers.py`
-4. Add decorator support in `decorators.py`
-5. Update documentation
-6. Add tests with availability checks
+1. Add typed array-operation leaves in `array_operations.py`.
+2. Add one `MemoryType` declaration carrying those operations and its runtime leaves.
+3. Add detection, conversion-pair, stack, cross-device, and optional-dependency tests.
+4. Update the extension and reference documentation.
+
+Do not add framework behavior to `_FRAMEWORK_CONFIG`, a consumer registry, or
+generated decorator exports. See `ADDING_NEW_FRAMEWORKS.md` for the complete
+declaration-owned extension procedure.
 
 ## Getting Help
 

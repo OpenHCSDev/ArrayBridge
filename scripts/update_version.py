@@ -1,111 +1,79 @@
 #!/usr/bin/env python3
+"""Update ArrayBridge's three version projections without Git side effects."""
+
 import argparse
 import re
-import subprocess
-import sys
 from pathlib import Path
 
-from packaging import version
+from packaging.version import InvalidVersion, Version
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+VERSION_FILES = {
+    PROJECT_ROOT
+    / "src/arraybridge/__init__.py": (
+        r"(__version__\s*=\s*['\"])([^'\"]+)(['\"])",
+        "package",
+    ),
+    PROJECT_ROOT
+    / "pyproject.toml": (
+        r"(^version\s*=\s*['\"])([^'\"]+)(['\"])",
+        "project",
+    ),
+    PROJECT_ROOT
+    / "docs/source/conf.py": (
+        r"(^release\s*=\s*['\"])([^'\"]+)(['\"])",
+        "documentation",
+    ),
+}
 
 
-def get_current_version():
-    """Get the current version from __init__.py"""
-    init_file = Path("src/arraybridge/__init__.py")
-    content = init_file.read_text()
-    match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
-    return match.group(1) if match else None
+def current_version() -> Version:
+    """Return the agreed version, failing when a projection has drifted."""
+    declared_versions: dict[str, Version] = {}
+    for path, (pattern, projection_name) in VERSION_FILES.items():
+        match = re.search(pattern, path.read_text(encoding="utf-8"), flags=re.MULTILINE)
+        if match is None:
+            raise RuntimeError(f"Version declaration is missing from {path}")
+        declared_versions[projection_name] = Version(match.group(2))
 
-def validate_version(new_version):
-    """Validate the new version string"""
+    unique_versions = set(declared_versions.values())
+    if len(unique_versions) != 1:
+        declarations = ", ".join(f"{name}={version}" for name, version in declared_versions.items())
+        raise RuntimeError(f"Version projections have drifted: {declarations}")
+    return unique_versions.pop()
+
+
+def update_version(version_text: str) -> None:
     try:
-        v = version.parse(new_version)
-        if not isinstance(v, version.Version):
-            raise ValueError("Invalid version format")
-        return True
-    except version.InvalidVersion:
-        raise ValueError("Invalid version format. Use semantic versioning (e.g., 1.2.3)")
+        requested = Version(version_text)
+    except InvalidVersion as error:
+        raise ValueError(f"Invalid version: {version_text}") from error
+    current = current_version()
+    if requested <= current:
+        raise ValueError(f"New version {requested} must be greater than {current}")
 
-def check_for_uncommitted_changes():
-    """Check if there are any uncommitted changes in tracked files"""
-    # Check for staged and unstaged changes in tracked files
-    staged = subprocess.run(['git', 'diff', '--staged', '--quiet'])
-    unstaged = subprocess.run(['git', 'diff', '--quiet'])
-    return staged.returncode != 0 or unstaged.returncode != 0
-
-def update_version(new_version=None):
-    """Update version in files and create git commit"""
-    try:
-        # Get current version first
-        current_version = get_current_version()
-        if not current_version:
-            print("Error: Could not find current version in __init__.py")
-            sys.exit(1)
-
-        if new_version is None:
-            # Auto-increment patch version if no version specified
-            v = version.parse(current_version)
-            new_version = f"{v.major}.{v.minor}.{v.micro + 1}"
-        
-        # Validate new version
-        validate_version(new_version)
-        if version.parse(new_version) <= version.parse(current_version):
-            print(f"Error: New version ({new_version}) must be greater than current version ({current_version})")
-            sys.exit(1)
-
-        # Check for uncommitted changes
-        if check_for_uncommitted_changes():
-            print("Error: You have uncommitted changes. Please commit or stash them first.")
-            sys.exit(1)
-
-        # Pull latest changes
-        try:
-            subprocess.run(['git', 'pull', 'origin', 'main'], check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"Error: Failed to pull latest changes: {e}")
-            sys.exit(1)
-        
-        # Update version in __init__.py
-        init_file = Path("src/arraybridge/__init__.py")
-        content = init_file.read_text()
-        new_content = re.sub(
-            r'(__version__\s*=\s*[\'"])[^\'"]+([\'"])',
-            rf'\g<1>{new_version}\2',
-            content
+    for path, (pattern, _projection_name) in VERSION_FILES.items():
+        content = path.read_text(encoding="utf-8")
+        updated, count = re.subn(
+            pattern,
+            rf"\g<1>{requested}\g<3>",
+            content,
+            flags=re.MULTILINE,
         )
-        init_file.write_text(new_content)
+        if count != 1:
+            raise RuntimeError(f"Expected one version declaration in {path}, found {count}")
+        path.write_text(updated, encoding="utf-8")
 
-        # Update version in pyproject.toml
-        pyproject_file = Path("pyproject.toml")
-        content = pyproject_file.read_text()
-        new_content = re.sub(
-            r'(version\s*=\s*[\'"])[^\'"]+([\'"])',
-            rf'\g<1>{new_version}\2',
-            content
-        )
-        pyproject_file.write_text(new_content)
+    print(f"Updated ArrayBridge version projections to {requested}")
+    print("Run scripts/verify_release_ready.py --allow-dirty, then review and commit.")
 
-        # Commit and push changes
-        subprocess.run(['git', 'add', 'src/arraybridge/__init__.py', 'pyproject.toml'], check=True)
-        subprocess.run(['git', 'commit', '-m', f'bump version to {new_version}'], check=True)
-        subprocess.run(['git', 'push', 'origin', 'main'], check=True)
-        
-        print(f"Successfully updated version to {new_version}")
-        print("Now run: python scripts/release.py")
-        
-    except subprocess.CalledProcessError as e:
-        print(f"Error during version update: {e}")
-        sys.exit(1)
-    except ValueError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
 
-def main():
-    parser = argparse.ArgumentParser(description='Update arraybridge version number')
-    parser.add_argument('--version', '-v',
-                      help='New version number (e.g., 1.2.3). If not provided, will increment patch version.')
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("version", help="New release version, for example 0.3.0")
     args = parser.parse_args()
-
     update_version(args.version)
+
 
 if __name__ == "__main__":
     main()

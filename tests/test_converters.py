@@ -1,9 +1,13 @@
 """Tests for arraybridge.converters module."""
 
+import sys
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
 from arraybridge.converters import convert_memory, detect_memory_type
+from arraybridge.exceptions import MemoryConversionError
 from arraybridge.types import MemoryType
 
 
@@ -102,6 +106,18 @@ class TestConvertMemory:
         with pytest.raises(ValueError):
             convert_memory(arr, source_type="numpy", target_type="invalid_type", gpu_id=0)
 
+    def test_convert_to_unavailable_declared_gpu_is_a_conversion_error(self, monkeypatch):
+        cpu_device = SimpleNamespace(platform="cpu")
+        monkeypatch.setitem(sys.modules, "jax", SimpleNamespace(devices=lambda: [cpu_device]))
+
+        with pytest.raises(MemoryConversionError, match="JAX device 0 is unavailable"):
+            convert_memory(
+                np.array([1, 2, 3]),
+                source_type=MemoryType.NUMPY,
+                target_type=MemoryType.JAX,
+                gpu_id=0,
+            )
+
     @pytest.mark.torch
     def test_convert_numpy_to_torch(self, torch_available):
         """Test converting NumPy to PyTorch."""
@@ -111,6 +127,10 @@ class TestConvertMemory:
         import torch
 
         arr = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        if not torch.cuda.is_available():
+            with pytest.raises(MemoryConversionError, match="device 0 is unavailable"):
+                convert_memory(arr, source_type="numpy", target_type="torch", gpu_id=0)
+            return
         result = convert_memory(arr, source_type="numpy", target_type="torch", gpu_id=0)
 
         assert isinstance(result, torch.Tensor)
@@ -193,6 +213,11 @@ class TestConversionIntegration:
         """Test round-trip conversion: NumPy -> PyTorch -> NumPy."""
         if not torch_available:
             pytest.skip("PyTorch not available")
+
+        import torch
+
+        if not torch.cuda.is_available():
+            pytest.skip("PyTorch CUDA device not available")
 
         original = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
 

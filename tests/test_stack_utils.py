@@ -1,7 +1,112 @@
 """Tests for arraybridge.stack_utils module."""
 
+import sys
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
+
+
+class _FakeDeviceScope:
+    def __init__(self, state, device_id):
+        self._state = state
+        self._device_id = device_id
+        self._previous = None
+
+    def __enter__(self):
+        self._previous = self._state["device"]
+        self._state["device"] = self._device_id
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self._state["device"] = self._previous
+        return False
+
+
+class _FakeCupyArray:
+    __module__ = "cupy"
+
+    def __init__(self, values, device_id, state):
+        self.values = np.asarray(values)
+        self.device = SimpleNamespace(id=device_id)
+        self._state = state
+
+    @property
+    def shape(self):
+        return self.values.shape
+
+    @property
+    def dtype(self):
+        return self.values.dtype
+
+    def copy(self):
+        return type(self)(self.values.copy(), self._state["device"], self._state)
+
+    def __getitem__(self, index):
+        return type(self)(self.values[index], self.device.id, self._state)
+
+    def __setitem__(self, index, value):
+        self.values[index] = value.values
+
+
+def _fake_cupy_module(state):
+    runtime = SimpleNamespace(
+        getDeviceCount=lambda: 2,
+        getDevice=lambda: state["device"],
+    )
+    cuda = SimpleNamespace(
+        runtime=runtime,
+        Device=lambda device_id: _FakeDeviceScope(state, device_id),
+    )
+    return SimpleNamespace(
+        cuda=cuda,
+        stack=lambda values, axis: _FakeCupyArray(
+            np.stack([value.values for value in values], axis=axis),
+            state["device"],
+            state,
+        ),
+    )
+
+
+class _FakeTensorFlowTensor:
+    __module__ = "tensorflow"
+
+    def __init__(self, values, device_id, state):
+        self.values = np.asarray(values)
+        self.device = f"/device:GPU:{device_id}"
+        self._state = state
+
+    @property
+    def shape(self):
+        return self.values.shape
+
+    @property
+    def dtype(self):
+        return self.values.dtype
+
+    def __getitem__(self, index):
+        return type(self)(self.values[index], int(self.device.rsplit(":", 1)[-1]), self._state)
+
+    def numpy(self):
+        return self.values
+
+
+def _fake_tensorflow_module(state):
+    def device_scope(name):
+        return _FakeDeviceScope(state, int(name.rsplit(":", 1)[-1]))
+
+    return SimpleNamespace(
+        config=SimpleNamespace(
+            list_logical_devices=lambda kind: [object(), object()] if kind == "GPU" else []
+        ),
+        device=device_scope,
+        identity=lambda data: _FakeTensorFlowTensor(data.values, state["device"], state),
+        stack=lambda values, axis: _FakeTensorFlowTensor(
+            np.stack([value.values for value in values], axis=axis),
+            state["device"],
+            state,
+        ),
+    )
 
 
 class TestStackUtils:
@@ -39,24 +144,44 @@ class TestStackUtils:
         arr_1d = np.array([1, 2, 3])
         assert _is_3d(arr_1d) is False
 
-    def test_enforce_gpu_device_requirements_valid(self):
+    def test_enforce_gpu_device_requirements_valid(self, monkeypatch):
         """Test _enforce_gpu_device_requirements with valid inputs."""
         from arraybridge.stack_utils import _enforce_gpu_device_requirements
 
         # CPU memory type should not raise
         _enforce_gpu_device_requirements("numpy", 0)
 
-        # GPU memory type with valid device ID
-        _enforce_gpu_device_requirements("torch", 0)
-        _enforce_gpu_device_requirements("cupy", 1)
+        torch = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: True, device_count=lambda: 2)
+        )
+        monkeypatch.setitem(sys.modules, "torch", torch)
 
-    def test_enforce_gpu_device_requirements_invalid_gpu_id(self):
+        _enforce_gpu_device_requirements("torch", 0)
+        _enforce_gpu_device_requirements("torch", 1)
+
+    def test_enforce_gpu_device_requirements_invalid_gpu_id(self, monkeypatch):
         """Test _enforce_gpu_device_requirements with invalid GPU device ID."""
         from arraybridge.stack_utils import _enforce_gpu_device_requirements
 
-        with pytest.raises(ValueError) as exc_info:
+        torch = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: True, device_count=lambda: 2)
+        )
+        monkeypatch.setitem(sys.modules, "torch", torch)
+
+        with pytest.raises(ValueError, match="device -1 is unavailable"):
             _enforce_gpu_device_requirements("torch", -1)
-        assert "Invalid GPU device ID" in str(exc_info.value)
+
+        with pytest.raises(ValueError, match="device 2 is unavailable"):
+            _enforce_gpu_device_requirements("torch", 2)
+
+    def test_cpu_only_jax_cannot_satisfy_stack_device_requirement(self, monkeypatch):
+        from arraybridge.stack_utils import _enforce_gpu_device_requirements
+
+        cpu_device = SimpleNamespace(platform="cpu")
+        monkeypatch.setitem(sys.modules, "jax", SimpleNamespace(devices=lambda: [cpu_device]))
+
+        with pytest.raises(ValueError, match="available device IDs are \\(\\)"):
+            _enforce_gpu_device_requirements("jax", 0)
 
     def test_stack_slices_empty_list(self):
         """Test stack_slices with empty list raises error."""
@@ -147,8 +272,7 @@ class TestStackUtils:
         assert result[0].shape == (1, 2)  # Each slice has shape (1, 2)
         assert result[1].shape == (1, 2)
 
-    @pytest.mark.parametrize("memory_type", ["numpy", "torch", "cupy", "tensorflow", "jax"])
-    def test_stack_unstack_roundtrip(self, memory_type):
+    def test_numpy_stack_unstack_roundtrip(self):
         """Test roundtrip: stack_slices -> unstack_slices."""
         from arraybridge.stack_utils import stack_slices, unstack_slices
 
@@ -167,3 +291,88 @@ class TestStackUtils:
         assert len(unstaked) == len(original_slices)
         for original, result in zip(original_slices, unstaked):
             np.testing.assert_array_equal(original, result)
+
+    def test_same_framework_stack_and_unstack_honor_requested_device(self, monkeypatch):
+        from arraybridge.stack_utils import stack_slices, unstack_slices
+
+        state = {"device": 0}
+        monkeypatch.setitem(sys.modules, "cupy", _fake_cupy_module(state))
+        inputs = [
+            _FakeCupyArray([[1, 2], [3, 4]], 0, state),
+            _FakeCupyArray([[5, 6], [7, 8]], 0, state),
+        ]
+
+        stacked = stack_slices(inputs, "cupy", 1)
+        slices = unstack_slices(stacked, "cupy", 1)
+
+        assert stacked.device.id == 1
+        assert [slice_.device.id for slice_ in slices] == [1, 1]
+        np.testing.assert_array_equal(stacked.values, np.stack([item.values for item in inputs]))
+        assert state["device"] == 0
+
+    def test_tensorflow_stack_uses_immutable_framework_leaf(self, monkeypatch):
+        from arraybridge.stack_utils import stack_slices, unstack_slices
+
+        state = {"device": 0}
+        monkeypatch.setitem(sys.modules, "tensorflow", _fake_tensorflow_module(state))
+        inputs = [
+            _FakeTensorFlowTensor([[1, 2], [3, 4]], 0, state),
+            _FakeTensorFlowTensor([[5, 6], [7, 8]], 0, state),
+        ]
+
+        stacked = stack_slices(inputs, "tensorflow", 1)
+        slices = unstack_slices(stacked, "tensorflow", 1)
+
+        assert stacked.device == "/device:GPU:1"
+        assert [slice_.device for slice_ in slices] == [
+            "/device:GPU:1",
+            "/device:GPU:1",
+        ]
+        np.testing.assert_array_equal(stacked.values, np.stack([item.values for item in inputs]))
+        assert state["device"] == 0
+
+    def test_pyclesperanto_stack_uses_binary_api_and_preserves_singleton_axis(self):
+        from arraybridge.array_operations import PYCLESPERANTO_OPERATIONS
+
+        class Array:
+            def __init__(self, values):
+                self.values = np.asarray(values)
+                self.shape = self.values.shape
+                self.dtype = self.values.dtype
+
+        class Module:
+            calls = []
+
+            @classmethod
+            def create(cls, shape, dtype):
+                cls.calls.append(("create", shape))
+                return Array(np.empty(shape, dtype=dtype))
+
+            @classmethod
+            def copy_slice(cls, source, target, index):
+                cls.calls.append(("copy_slice", index))
+                target.values[index] = source.values
+                return target
+
+            @classmethod
+            def concatenate_along_z(cls, left, right):
+                cls.calls.append(("concatenate", left.shape, right.shape))
+                left_values = left.values if left.values.ndim == 3 else left.values[None]
+                right_values = right.values if right.values.ndim == 3 else right.values[None]
+                return Array(np.concatenate((left_values, right_values), axis=0))
+
+        first = Array([[1, 2], [3, 4]])
+        second = Array([[5, 6], [7, 8]])
+        third = Array([[9, 10], [11, 12]])
+
+        singleton = PYCLESPERANTO_OPERATIONS.stack([first], Module)
+        stack = PYCLESPERANTO_OPERATIONS.stack([first, second, third], Module)
+
+        assert singleton.shape == (1, 2, 2)
+        assert stack.shape == (3, 2, 2)
+        assert Module.calls == [
+            ("create", (1, 2, 2)),
+            ("copy_slice", 0),
+            ("concatenate", (2, 2), (2, 2)),
+            ("concatenate", (2, 2, 2), (2, 2)),
+        ]

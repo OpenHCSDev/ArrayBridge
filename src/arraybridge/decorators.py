@@ -8,7 +8,7 @@ These decorators annotate functions with input_memory_type and output_memory_typ
 attributes and provide automatic thread-local CUDA stream management for GPU
 frameworks to enable true parallelization across multiple threads.
 
-REFACTORED: Uses enum-driven metaprogramming to eliminate 79% of code duplication.
+Framework-specific runtime capabilities are delegated to ``MemoryType`` members.
 """
 
 import functools
@@ -19,17 +19,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, ClassVar, TypeVar
+from typing import Any, ClassVar, TypeVar, cast
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 
-from arraybridge.dtype_scaling import SCALING_FUNCTIONS
-from arraybridge.framework_ops import _FRAMEWORK_OPS
 from arraybridge.oom_recovery import _execute_with_oom_recovery
 from arraybridge.slice_processing import process_slices
 from arraybridge.types import MemoryType
-from arraybridge.utils import optional_import
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +170,7 @@ class DtypeConversionRunner(
         cls,
         dtype_conversion: DtypeConversion,
     ) -> "DtypeConversionRunner":
-        return cls.__registry__[dtype_conversion.value]()
+        return cast(DtypeConversionRunner, cls.__registry__[dtype_conversion.value]())
 
     @abstractmethod
     def apply(self, request: DtypeConversionRequest) -> Any:
@@ -236,63 +233,6 @@ class Float64DtypeConversionRunner(FixedDtypeConversionRunner):
     dtype_conversion = DtypeConversion.FLOAT64
 
 
-@dataclass(frozen=True, slots=True)
-class GPUStreamRequest:
-    """Runtime context for framework stream selection."""
-
-    thread_context: "ThreadGPUContext"
-
-
-class GPUStreamStrategy(
-    EnumValueRegistryKeyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Registered stream selector for GPU memory frameworks."""
-
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
-
-    memory_type: ClassVar[MemoryType | None] = None
-
-    @classmethod
-    def registry_enum_member(cls) -> Enum | None:
-        return cls.memory_type
-
-    @classmethod
-    def for_memory_type(cls, memory_type: MemoryType) -> "GPUStreamStrategy":
-        strategy_type = cls.__registry__.get(memory_type.value, NoGPUStreamStrategy)
-        return strategy_type()
-
-    @abstractmethod
-    def stream(self, request: GPUStreamRequest) -> Any:
-        """Return a context-manager stream for the framework, or None."""
-
-
-class NoGPUStreamStrategy(GPUStreamStrategy):
-    """Frameworks without explicit stream support execute directly."""
-
-    def stream(self, request: GPUStreamRequest) -> Any:
-        return None
-
-
-class CupyGPUStreamStrategy(GPUStreamStrategy):
-    memory_type = MemoryType.CUPY
-
-    def stream(self, request: GPUStreamRequest) -> Any:
-        return request.thread_context.get_cupy_stream()
-
-
-class TorchGPUStreamStrategy(GPUStreamStrategy):
-    memory_type = MemoryType.TORCH
-
-    def stream(self, request: GPUStreamRequest) -> Any:
-        return request.thread_context.get_torch_stream()
-
-
-# Thread-local cache for lazy-loaded GPU frameworks
-_gpu_frameworks_cache = {}
-
-
 class KeywordOnlySignatureExtension:
     """Insert decorator-owned keyword-only parameters in valid signature order."""
 
@@ -315,61 +255,41 @@ class KeywordOnlySignatureExtension:
         return len(parameters)
 
 
-def _create_lazy_getter(framework_name: str):
-    """Factory function that creates a lazy import getter for a framework."""
-
-    def getter():
-        if framework_name not in _gpu_frameworks_cache:
-            _gpu_frameworks_cache[framework_name] = optional_import(framework_name)
-            if _gpu_frameworks_cache[framework_name] is not None:
-                logger.debug(
-                    f"🔧 Lazy imported {framework_name} in thread {threading.current_thread().name}"
-                )
-        return _gpu_frameworks_cache[framework_name]
-
-    return getter
-
-
-# Auto-generate lazy getters for all GPU frameworks
-for mem_type in MemoryType:
-    ops = _FRAMEWORK_OPS[mem_type]
-    if ops["lazy_getter"] is not None:
-        getter_func = _create_lazy_getter(ops["import_name"])
-        globals()[f"_get_{ops['import_name']}"] = getter_func
-
-
 # Thread-local storage for GPU streams and contexts
 _thread_gpu_contexts = threading.local()
 
 
 class ThreadGPUContext:
-    """Thread-local GPU context manager for CUDA streams."""
+    """Thread-local streams keyed by framework-local device identity."""
 
     def __init__(self):
-        self.cupy_stream = None
-        self.torch_stream = None
-        self.tensorflow_device = None
-        self.jax_device = None
+        self._streams: dict[tuple[MemoryType, int], Any] = {}
 
-    def get_cupy_stream(self):
-        """Get or create thread-local CuPy stream."""
-        if self.cupy_stream is None:
-            cupy = globals().get("_get_cupy", lambda: None)()  # noqa: F821
-            if cupy is not None and hasattr(cupy, "cuda"):
-                self.cupy_stream = cupy.cuda.Stream()
-                logger.debug(f"🔧 Created CuPy stream for thread {threading.current_thread().name}")
-        return self.cupy_stream
+    def stream_for(
+        self,
+        memory_type: MemoryType,
+        module: Any,
+    ) -> tuple[int | None, Any | None]:
+        """Return the current device and its stable thread-local stream."""
 
-    def get_torch_stream(self):
-        """Get or create thread-local PyTorch stream."""
-        if self.torch_stream is None:
-            torch = globals().get("_get_torch", lambda: None)()  # noqa: F821
-            if torch is not None and hasattr(torch, "cuda") and torch.cuda.is_available():
-                self.torch_stream = torch.cuda.Stream()
-                logger.debug(
-                    f"🔧 Created PyTorch stream for thread {threading.current_thread().name}"
-                )
-        return self.torch_stream
+        device_id = memory_type.current_device_id(module)
+        if device_id is None:
+            return None, None
+        memory_type.require_device(device_id, module)
+        key = (memory_type, device_id)
+        if key not in self._streams:
+            with memory_type.device_scope(device_id, module):
+                stream = memory_type.create_stream(module)
+            if stream is None:
+                return device_id, None
+            self._streams[key] = stream
+            logger.debug(
+                "Created %s stream for device %d in thread %s",
+                memory_type.display_name,
+                device_id,
+                threading.current_thread().name,
+            )
+        return device_id, self._streams[key]
 
 
 def _get_thread_gpu_context():
@@ -390,8 +310,10 @@ def memory_types(
     This is the foundation decorator that all memory-type-specific decorators build upon.
     """
 
-    input_memory_type = MemoryType(input_type).value
-    output_memory_type = MemoryType(output_type).value
+    input_member = input_type if isinstance(input_type, MemoryType) else MemoryType(input_type)
+    output_member = output_type if isinstance(output_type, MemoryType) else MemoryType(output_type)
+    input_memory_type = input_member.value
+    output_memory_type = output_member.value
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
@@ -406,12 +328,12 @@ def memory_types(
             return result
 
         # Attach memory type metadata
-        wrapper.input_memory_type = input_memory_type
-        wrapper.output_memory_type = output_memory_type
+        setattr(wrapper, "input_memory_type", input_memory_type)
+        setattr(wrapper, "output_memory_type", output_memory_type)
         if contract is not None and not callable(contract):
-            wrapper.__processing_contract__ = contract
+            setattr(wrapper, "__processing_contract__", contract)
 
-        return wrapper
+        return cast(F, wrapper)
 
     return decorator
 
@@ -422,8 +344,7 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
 
     This single function replaces 6 nearly-identical dtype wrapper functions.
     """
-    _FRAMEWORK_OPS[mem_type]
-    scale_func = SCALING_FUNCTIONS[mem_type.value]
+    scale_func = mem_type.scale_dtype
 
     @functools.wraps(func)
     def dtype_wrapper(image, *args, **kwargs):
@@ -483,7 +404,7 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
         dtype_signature = KeywordOnlySignatureExtension(dtype_signature).with_parameter(
             DtypeConversionConfig.parameter()
         )
-        dtype_wrapper.__signature__ = dtype_signature
+        setattr(dtype_wrapper, "__signature__", dtype_signature)
 
         # Update docstring
         if dtype_wrapper.__doc__:
@@ -509,48 +430,41 @@ def _create_gpu_wrapper(func, mem_type: MemoryType, oom_recovery: bool):
 
     This function creates the GPU-specific wrapper with stream management and OOM recovery.
     """
-    ops = _FRAMEWORK_OPS[mem_type]
-    framework_name = ops["import_name"]
-    lazy_getter = globals().get(ops["lazy_getter"])
 
     @functools.wraps(func)
     def gpu_wrapper(*args, **kwargs):
-        framework = lazy_getter()
+        framework = mem_type.import_if_installed()
 
         # Check if GPU is available for this framework
-        if framework is not None:
-            gpu_check_expr = ops["gpu_check"].format(mod=framework_name)
-            try:
-                gpu_available = eval(gpu_check_expr, {framework_name: framework})
-            except Exception:
-                gpu_available = False
+        if framework is not None and mem_type.available_device_ids(framework):
+            # Get thread-local context
+            ctx = _get_thread_gpu_context()
 
-            if gpu_available:
-                # Get thread-local context
-                ctx = _get_thread_gpu_context()
+            device_id, stream = ctx.stream_for(mem_type, framework)
 
-                stream = GPUStreamStrategy.for_memory_type(mem_type).stream(GPUStreamRequest(ctx))
-
-                # Define execution function that captures args/kwargs
-                def execute_with_stream():
-                    if stream is not None:
-                        with stream:
-                            return func(*args, **kwargs)
-                    else:
+            # Define execution function that captures args/kwargs
+            def execute_with_stream():
+                if stream is not None:
+                    with stream:
                         return func(*args, **kwargs)
+                return func(*args, **kwargs)
 
-                # Execute with OOM recovery if enabled
-                if oom_recovery and ops["has_oom_recovery"]:
-                    return _execute_with_oom_recovery(execute_with_stream, mem_type.value)
-                else:
-                    return execute_with_stream()
+            # Execute with OOM recovery if enabled
+            if oom_recovery:
+                return _execute_with_oom_recovery(
+                    execute_with_stream,
+                    mem_type.value,
+                    device_id=device_id,
+                )
+            return execute_with_stream()
 
         # CPU fallback or framework not available
         return func(*args, **kwargs)
 
     # Preserve memory type attributes
-    gpu_wrapper.input_memory_type = func.input_memory_type
-    gpu_wrapper.output_memory_type = func.output_memory_type
+    setattr(gpu_wrapper, "input_memory_type", func.input_memory_type)
+    setattr(gpu_wrapper, "output_memory_type", func.output_memory_type)
+    setattr(gpu_wrapper, "execution_memory_type", mem_type.value)
 
     return gpu_wrapper
 
@@ -561,7 +475,6 @@ def _create_memory_decorator(mem_type: MemoryType):
 
     This single factory replaces 6 nearly-identical decorator functions.
     """
-    ops = _FRAMEWORK_OPS[mem_type]
 
     def decorator(
         func=None,
@@ -596,8 +509,10 @@ def _create_memory_decorator(mem_type: MemoryType):
             func = _create_dtype_wrapper(func, mem_type, func.__name__)
 
             # Apply GPU wrapper if this is a GPU memory type
-            if ops["gpu_check"] is not None:
+            if mem_type.is_gpu:
                 func = _create_gpu_wrapper(func, mem_type, oom_recovery)
+
+            func.execution_memory_type = mem_type.value
 
             return func
 
@@ -608,7 +523,7 @@ def _create_memory_decorator(mem_type: MemoryType):
 
     # Set proper function name and docstring
     decorator.__name__ = mem_type.value
-    decorator.__doc__ = decorator.__doc__.format(mem_type=ops["display_name"])
+    decorator.__doc__ = (decorator.__doc__ or "").format(mem_type=mem_type.display_name)
 
     return decorator
 
@@ -619,7 +534,7 @@ for mem_type in MemoryType:
     globals()[mem_type.value] = decorator_func
 
 
-# Export all decorators
+# Export the fixed decorator infrastructure plus declaration-derived helpers.
 __all__ = [
     "memory_types",
     "DtypeConversion",
@@ -627,10 +542,4 @@ __all__ = [
     "PreserveInputDtypeConfig",
     "PRESERVE_INPUT_DTYPE_CONFIG",
     "SliceBySliceRuntimeParameter",
-    "numpy",  # noqa: F822
-    "cupy",  # noqa: F822
-    "torch",  # noqa: F822
-    "tensorflow",  # noqa: F822
-    "jax",  # noqa: F822
-    "pyclesperanto",  # noqa: F822
-]
+] + [memory_type.value for memory_type in MemoryType]

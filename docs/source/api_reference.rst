@@ -5,7 +5,9 @@ Public imports
 --------------
 
 ``MemoryType``, ``CPU_MEMORY_TYPES``, ``GPU_MEMORY_TYPES``, ``SUPPORTED_MEMORY_TYPES``
-  Nominal framework identities.
+  Framework declarations. Each member owns import identity, conversion,
+  stacking, dtype scaling, device discovery, scoped selection, movement,
+  DLPack import/export, cleanup, and pre-import coexistence defaults.
 
 ``detect_memory_type`` and ``convert_memory``
   Detection and explicit conversion.

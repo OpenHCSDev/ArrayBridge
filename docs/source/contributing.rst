@@ -17,9 +17,9 @@ Framework extensions
 --------------------
 
 A framework extension must update the nominal ``MemoryType`` declaration and
-the owning conversion/framework strategies. Add detection tests, conversion
-pair tests, stack tests, and optional-dependency behavior. Consumers should not
-maintain a second framework-name registry.
+its typed operation leaves. Add detection, conversion-pair, stack,
+cross-device, and optional-dependency tests. Consumers should not maintain a
+second framework-name registry.
 
 See :doc:`advanced_topics` for the ownership model and the repository's
 `contribution guide

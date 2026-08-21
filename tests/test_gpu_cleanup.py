@@ -1,244 +1,156 @@
-"""Tests for arraybridge.gpu_cleanup module."""
+"""Behavioral tests for declaration-owned GPU cleanup."""
+
+import sys
+from contextlib import AbstractContextManager
+from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
 from arraybridge.gpu_cleanup import MEMORY_TYPE_CLEANUP_REGISTRY, cleanup_all_gpu_frameworks
-from arraybridge.types import MemoryType
+from arraybridge.types import GPU_MEMORY_TYPES, MemoryType
 
 
-class TestCleanupRegistry:
-    """Tests for cleanup registry."""
+class _DeviceScope(AbstractContextManager):
+    def __init__(self, events, device_id):
+        self.events = events
+        self.device_id = device_id
 
-    def test_cleanup_registry_has_all_memory_types(self):
-        """Test that cleanup registry has all memory types."""
-        for mem_type in MemoryType:
-            assert mem_type.value in MEMORY_TYPE_CLEANUP_REGISTRY
-            assert callable(MEMORY_TYPE_CLEANUP_REGISTRY[mem_type.value])
+    def __enter__(self):
+        self.events.append(("enter", self.device_id))
+        return self
 
-    def test_cleanup_functions_exist(self):
-        """Test that cleanup functions are available globally."""
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.events.append(("exit", self.device_id))
+        return False
+
+
+class _Pool:
+    def __init__(self, name, events):
+        self.name = name
+        self.events = events
+
+    def free_all_blocks(self):
+        self.events.append(("free", self.name))
+
+
+def _fake_cupy(events, device_count=2):
+    regular_pool = _Pool("regular", events)
+    pinned_pool = _Pool("pinned", events)
+    runtime = SimpleNamespace(
+        getDeviceCount=lambda: device_count,
+        deviceSynchronize=lambda: events.append(("synchronize", None)),
+    )
+    cuda = SimpleNamespace(
+        runtime=runtime,
+        Device=lambda device_id: _DeviceScope(events, device_id),
+    )
+    return SimpleNamespace(
+        cuda=cuda,
+        get_default_memory_pool=lambda: regular_pool,
+        get_default_pinned_memory_pool=lambda: pinned_pool,
+    )
+
+
+class TestCleanupProjection:
+    def test_compatibility_registry_is_derived_for_every_declaration(self):
+        assert isinstance(MEMORY_TYPE_CLEANUP_REGISTRY, MappingProxyType)
+        assert set(MEMORY_TYPE_CLEANUP_REGISTRY) == {
+            memory_type.value for memory_type in MemoryType
+        }
+        for memory_type in MemoryType:
+            cleanup = MEMORY_TYPE_CLEANUP_REGISTRY[memory_type.value]
+            assert cleanup.__name__ == f"cleanup_{memory_type.import_name}_gpu"
+
+    def test_cleanup_functions_remain_importable(self):
         from arraybridge import gpu_cleanup
 
-        # Check that cleanup functions exist
-        expected_functions = [
-            "cleanup_numpy_gpu",
-            "cleanup_cupy_gpu",
-            "cleanup_torch_gpu",
-            "cleanup_tensorflow_gpu",
-            "cleanup_jax_gpu",
-            "cleanup_pyclesperanto_gpu",
+        for memory_type in MemoryType:
+            assert callable(getattr(gpu_cleanup, f"cleanup_{memory_type.import_name}_gpu"))
+
+
+class TestCleanupBehavior:
+    def test_absent_frameworks_are_never_imported(self, monkeypatch):
+        from arraybridge import types
+
+        for memory_type in GPU_MEMORY_TYPES:
+            monkeypatch.delitem(sys.modules, memory_type.import_name, raising=False)
+
+        def fail_import(name):
+            raise AssertionError(f"cleanup imported absent framework {name}")
+
+        monkeypatch.setattr(types.importlib, "import_module", fail_import)
+        cleanup_all_gpu_frameworks()
+
+    def test_loaded_cupy_cleanup_executes_declared_leaf(self, monkeypatch):
+        events = []
+        monkeypatch.setitem(sys.modules, "cupy", _fake_cupy(events))
+
+        MEMORY_TYPE_CLEANUP_REGISTRY[MemoryType.CUPY.value]()
+
+        assert events == [
+            ("enter", 0),
+            ("free", "regular"),
+            ("free", "pinned"),
+            ("synchronize", None),
+            ("exit", 0),
+            ("enter", 1),
+            ("free", "regular"),
+            ("free", "pinned"),
+            ("synchronize", None),
+            ("exit", 1),
         ]
 
-        for func_name in expected_functions:
-            assert hasattr(gpu_cleanup, func_name)
-            func = getattr(gpu_cleanup, func_name)
-            assert callable(func)
+    def test_device_specific_cleanup_is_scoped(self, monkeypatch):
+        events = []
+        monkeypatch.setitem(sys.modules, "cupy", _fake_cupy(events))
 
+        MEMORY_TYPE_CLEANUP_REGISTRY[MemoryType.CUPY.value](1)
 
-class TestIndividualCleanupFunctions:
-    """Tests for individual cleanup functions."""
+        assert events == [
+            ("enter", 1),
+            ("free", "regular"),
+            ("free", "pinned"),
+            ("synchronize", None),
+            ("exit", 1),
+        ]
 
-    def test_numpy_cleanup_noop(self):
-        """Test numpy cleanup is no-op."""
-        from arraybridge.gpu_cleanup import cleanup_numpy_gpu
+    def test_declaration_rejects_undeclared_cleanup_device(self, monkeypatch):
+        events = []
+        monkeypatch.setitem(sys.modules, "cupy", _fake_cupy(events, device_count=1))
 
-        # Should not raise any errors
-        cleanup_numpy_gpu()
-        cleanup_numpy_gpu(device_id=0)
+        with pytest.raises(ValueError, match="device 3 is unavailable"):
+            MemoryType.CUPY.cleanup_loaded(3)
 
-    def test_cupy_cleanup_unavailable(self):
-        """Test cupy cleanup when cupy is not available."""
-        from arraybridge.gpu_cleanup import cleanup_cupy_gpu
+        assert events == []
 
-        # Should not raise any errors even if cupy not available
-        cleanup_cupy_gpu()
-        cleanup_cupy_gpu(device_id=0)
+    def test_compatibility_cleanup_contains_undeclared_device(self, monkeypatch, caplog):
+        events = []
+        monkeypatch.setitem(sys.modules, "cupy", _fake_cupy(events, device_count=1))
 
-    def test_cupy_cleanup_with_gpu(self):
-        """Test cupy cleanup when cupy and GPU are available."""
-        cp = pytest.importorskip("cupy")
-        import unittest.mock
+        MEMORY_TYPE_CLEANUP_REGISTRY[MemoryType.CUPY.value](3)
 
-        from arraybridge.gpu_cleanup import cleanup_cupy_gpu
+        assert events == []
+        assert "device 3 is unavailable" in caplog.text
 
-        # Create some GPU memory to cleanup
-        try:
-            gpu_array = cp.zeros((100, 100))
-            assert gpu_array.device.id >= 0  # Ensure we have GPU memory
-
-            # Mock the GPU check to return True so cleanup code runs
-            with unittest.mock.patch("arraybridge.gpu_cleanup.eval") as mock_eval:
-                mock_eval.return_value = True  # GPU is available
-                # Cleanup should work without errors
-                cleanup_cupy_gpu()
-                cleanup_cupy_gpu(device_id=0)
-
-        except Exception as e:
-            pytest.skip(f"CuPy GPU test failed: {e}")
-
-    def test_torch_cleanup_unavailable(self):
-        """Test torch cleanup when torch is not available."""
-        from arraybridge.gpu_cleanup import cleanup_torch_gpu
-
-        # Should not raise any errors even if torch not available
-        cleanup_torch_gpu()
-        cleanup_torch_gpu(device_id=0)
-
-    def test_torch_cleanup_with_gpu(self):
-        """Test torch cleanup when torch and GPU are available."""
-        import unittest.mock
-
-        torch = pytest.importorskip("torch")
-        from arraybridge.gpu_cleanup import cleanup_torch_gpu
-
-        # Create some GPU memory to cleanup
-        try:
-            gpu_tensor = torch.zeros((100, 100), device="cuda")
-            assert gpu_tensor.device.type == "cuda"
-
-            # Mock the GPU check to return True so cleanup code runs
-            with unittest.mock.patch("arraybridge.gpu_cleanup.eval") as mock_eval:
-                mock_eval.return_value = True  # GPU is available
-                # Cleanup should work without errors
-                cleanup_torch_gpu()
-                cleanup_torch_gpu(device_id=0)
-
-        except Exception as e:
-            pytest.skip(f"PyTorch GPU test failed: {e}")
-
-    def test_tensorflow_cleanup_unavailable(self):
-        """Test tensorflow cleanup when tensorflow is not available."""
-        from arraybridge.gpu_cleanup import cleanup_tensorflow_gpu
-
-        # Should not raise any errors even if tensorflow not available
-        cleanup_tensorflow_gpu()
-        cleanup_tensorflow_gpu(device_id=0)
-
-    def test_tensorflow_cleanup_with_gpu(self):
-        """Test tensorflow cleanup when tensorflow and GPU are available."""
-        import unittest.mock
-
-        tf = pytest.importorskip("tensorflow")
-        from arraybridge.gpu_cleanup import cleanup_tensorflow_gpu
-
-        # Create some GPU memory to cleanup
-        try:
-            with tf.device("/GPU:0"):
-                gpu_tensor = tf.zeros((100, 100))
-                assert "GPU" in gpu_tensor.device
-
-            # Mock the GPU check to return True so cleanup code runs
-            with unittest.mock.patch("arraybridge.gpu_cleanup.eval") as mock_eval:
-                mock_eval.return_value = True  # GPU is available
-                # Cleanup should work without errors
-                cleanup_tensorflow_gpu()
-                cleanup_tensorflow_gpu(device_id=0)
-
-        except Exception as e:
-            pytest.skip(f"TensorFlow GPU test failed: {e}")
-
-    def test_jax_cleanup_unavailable(self):
-        """Test jax cleanup when jax is not available."""
-        from arraybridge.gpu_cleanup import cleanup_jax_gpu
-
-        # Should not raise any errors even if jax not available
-        cleanup_jax_gpu()
-        cleanup_jax_gpu(device_id=0)
-
-    def test_jax_cleanup_with_gpu(self):
-        """Test jax cleanup when jax and GPU are available."""
-        import unittest.mock
-
-        jax = pytest.importorskip("jax")
-        jnp = jax.numpy
-        from arraybridge.gpu_cleanup import cleanup_jax_gpu
-
-        # Create some GPU memory to cleanup
-        try:
-            jnp.zeros((100, 100))
-            # JAX arrays are typically on CPU by default, but cleanup should still work
-
-            # Mock the GPU check to return True so cleanup code runs
-            with unittest.mock.patch("arraybridge.gpu_cleanup.eval") as mock_eval:
-                mock_eval.return_value = True  # GPU is available
-                cleanup_jax_gpu()
-                cleanup_jax_gpu(device_id=0)
-
-        except Exception as e:
-            pytest.skip(f"JAX test failed: {e}")
-
-    def test_pyclesperanto_cleanup_unavailable(self):
-        """Test pyclesperanto cleanup when pyclesperanto is not available."""
-        from arraybridge.gpu_cleanup import cleanup_pyclesperanto_gpu
-
-        # Should not raise any errors even if pyclesperanto not available
-        cleanup_pyclesperanto_gpu()
-        cleanup_pyclesperanto_gpu(device_id=0)
-
-    def test_pyclesperanto_cleanup_with_gpu(self):
-        """Test pyclesperanto cleanup when pyclesperanto and GPU are available."""
-        import unittest.mock
-
-        cle = pytest.importorskip("pyclesperanto")
-        from arraybridge.gpu_cleanup import cleanup_pyclesperanto_gpu
-
-        # Create some GPU memory to cleanup
-        try:
-            cle.create((100, 100))
-            # Mock the GPU check to return True so cleanup code runs
-            with unittest.mock.patch("arraybridge.gpu_cleanup.eval") as mock_eval:
-                mock_eval.return_value = True  # GPU is available
-                # Cleanup should work without errors
-                cleanup_pyclesperanto_gpu()
-                cleanup_pyclesperanto_gpu(device_id=0)
-
-        except Exception as e:
-            pytest.skip(f"pyclesperanto GPU test failed: {e}")
-
-
-class TestCleanupAllFrameworks:
-    """Tests for cleanup_all_gpu_frameworks function."""
-
-    def test_cleanup_all_frameworks_no_errors(self):
-        """Test cleanup_all_gpu_frameworks doesn't raise errors."""
-        # Should not raise any errors even if no frameworks available
-        cleanup_all_gpu_frameworks()
-        cleanup_all_gpu_frameworks(device_id=0)
-
-    def test_cleanup_all_with_device_id(self):
-        """Test cleanup_all_gpu_frameworks with specific device ID."""
-        cleanup_all_gpu_frameworks(device_id=0)
-        cleanup_all_gpu_frameworks(device_id=1)
-
-
-class TestCleanupFunctionSignatures:
-    """Tests for cleanup function signatures and documentation."""
-
-    def test_cleanup_function_signatures(self):
-        """Test that cleanup functions have correct signatures."""
-        import inspect
-
-        from arraybridge.gpu_cleanup import cleanup_cupy_gpu, cleanup_numpy_gpu, cleanup_torch_gpu
-
-        for func in [cleanup_numpy_gpu, cleanup_cupy_gpu, cleanup_torch_gpu]:
-            sig = inspect.signature(func)
-            assert "device_id" in sig.parameters
-
-            # device_id should be optional
-            param = sig.parameters["device_id"]
-            assert param.default is None
-
-    def test_cleanup_function_docstrings(self):
-        """Test that cleanup functions have docstrings."""
-        from arraybridge.gpu_cleanup import cleanup_cupy_gpu, cleanup_numpy_gpu, cleanup_torch_gpu
-
-        for func in [cleanup_numpy_gpu, cleanup_cupy_gpu, cleanup_torch_gpu]:
-            assert func.__doc__ is not None
-            assert len(func.__doc__.strip()) > 0
-
-    def test_cleanup_all_docstring(self):
-        """Test cleanup_all_gpu_frameworks has proper docstring."""
-        assert cleanup_all_gpu_frameworks.__doc__ is not None
-        assert (
-            "Clean up GPU memory for all available frameworks" in cleanup_all_gpu_frameworks.__doc__
+    def test_jax_compilation_cache_is_not_misrepresented_as_gpu_cleanup(self, monkeypatch):
+        events = []
+        module = SimpleNamespace(
+            clear_caches=lambda: events.append("clear"),
+            devices=lambda: [SimpleNamespace(platform="gpu")],
         )
+        monkeypatch.setitem(sys.modules, "jax", module)
+
+        MemoryType.JAX.cleanup_loaded(0)
+
+        assert events == []
+
+    def test_numpy_cleanup_is_a_noop_without_import(self, monkeypatch):
+        from arraybridge import types
+
+        monkeypatch.delitem(sys.modules, "numpy", raising=False)
+
+        def fail_import(name):
+            raise AssertionError(f"cleanup imported {name}")
+
+        monkeypatch.setattr(types.importlib, "import_module", fail_import)
+        MEMORY_TYPE_CLEANUP_REGISTRY[MemoryType.NUMPY.value](0)

@@ -8,6 +8,7 @@ from arraybridge.decorators import (
     DtypeConversionConfig,
     PreserveInputDtypeConfig,
     SliceBySliceRuntimeParameter,
+    ThreadGPUContext,
     memory_types,
 )
 from arraybridge.types import MemoryType
@@ -37,6 +38,77 @@ class TestDtypeConversion:
         assert DtypeConversion.FLOAT64.numpy_dtype == np.float64
         assert DtypeConversion.PRESERVE_INPUT.numpy_dtype is None
         assert DtypeConversion.NATIVE_OUTPUT.numpy_dtype is None
+
+
+class TestThreadGPUContext:
+    def test_streams_are_cached_by_framework_local_device(self):
+        state = {"device": 0}
+        created = []
+
+        class DeviceScope:
+            def __init__(self, device_id):
+                self.device_id = device_id
+                self.previous = None
+
+            def __enter__(self):
+                self.previous = state["device"]
+                state["device"] = self.device_id
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                state["device"] = self.previous
+                return False
+
+        class Stream:
+            def __init__(self):
+                self.device_id = state["device"]
+                created.append(self)
+
+        module = type(
+            "FakeCupy",
+            (),
+            {
+                "cuda": type(
+                    "Cuda",
+                    (),
+                    {
+                        "runtime": type(
+                            "Runtime",
+                            (),
+                            {
+                                "getDeviceCount": staticmethod(lambda: 2),
+                                "getDevice": staticmethod(lambda: state["device"]),
+                            },
+                        )(),
+                        "Device": staticmethod(DeviceScope),
+                        "Stream": Stream,
+                    },
+                )()
+            },
+        )()
+        context = ThreadGPUContext()
+
+        _, first = context.stream_for(MemoryType.CUPY, module)
+        _, repeated = context.stream_for(MemoryType.CUPY, module)
+        state["device"] = 1
+        _, second = context.stream_for(MemoryType.CUPY, module)
+        state["device"] = 0
+        _, first_again = context.stream_for(MemoryType.CUPY, module)
+
+        assert first is repeated is first_again
+        assert second is not first
+        assert [stream.device_id for stream in created] == [0, 1]
+
+    def test_framework_without_stream_leaf_does_not_invent_one(self):
+        module = type(
+            "FakeTensorFlow",
+            (),
+            {"config": type("Config", (), {"list_logical_devices": lambda self, _: []})()},
+        )()
+
+        assert ThreadGPUContext().stream_for(MemoryType.TENSORFLOW, module) == (
+            None,
+            None,
+        )
 
 
 class TestMemoryTypesDecorator:
@@ -84,6 +156,27 @@ class TestMemoryTypesDecorator:
 
         assert test_func.input_memory_type == "numpy"
         assert test_func.output_memory_type == "torch"
+
+    def test_framework_helper_declares_execution_owner_independently(self):
+        from arraybridge.decorators import torch
+
+        @torch(input_type=MemoryType.CUPY, output_type=MemoryType.NUMPY)
+        def test_func(value):
+            return value
+
+        assert test_func.input_memory_type == "cupy"
+        assert test_func.output_memory_type == "numpy"
+        assert test_func.execution_memory_type == "torch"
+
+    def test_decorator_exports_are_declaration_derived(self):
+        import arraybridge
+        from arraybridge import decorators
+
+        expected = {memory_type.value for memory_type in MemoryType}
+
+        assert expected <= set(decorators.__all__)
+        assert expected <= set(arraybridge.__all__)
+        assert all(callable(getattr(arraybridge, name)) for name in expected)
 
     def test_memory_types_preserves_function_metadata(self):
         """Test that memory_types preserves function name, docstring, etc."""

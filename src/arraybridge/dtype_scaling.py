@@ -1,179 +1,25 @@
-"""
-Dtype scaling and conversion functions for different memory types.
-
-This module provides framework-specific scaling functions that handle conversion
-between floating point and integer dtypes with proper range scaling.
-
-Uses enum-driven metaprogramming to eliminate 276 lines of duplication (82% reduction).
-Pattern follows PR #38: pure data → eval() → single generic function.
-"""
+"""Declaration-owned dtype scaling and compatibility projections."""
 
 from functools import partial
+from types import MappingProxyType
+from typing import Any
 
-import numpy as np
-
-from arraybridge.framework_config import _FRAMEWORK_CONFIG
+from arraybridge.array_operations import _SCALING_RANGES as _SCALING_RANGES
 from arraybridge.types import MemoryType
-from arraybridge.utils import optional_import
-
-# Scaling ranges for integer dtypes (shared across all memory types)
-_SCALING_RANGES = {
-    "uint8": 255.0,
-    "uint16": 65535.0,
-    "uint32": 4294967295.0,
-    "int16": (65535.0, 32768.0),  # (scale, offset)
-    "int32": (4294967295.0, 2147483648.0),
-}
 
 
-# NOTE: Framework-specific scaling operations now defined in framework_config.py
-# This eliminates the scattered _FRAMEWORK_OPS dict
+def _scale_generic(result: Any, target_dtype: Any, mem_type: MemoryType) -> Any:
+    """Scale through the operation leaf carried by ``mem_type``."""
+
+    return mem_type.scale_dtype(result, target_dtype)
 
 
-def _scale_generic(result, target_dtype, mem_type: MemoryType):
-    """
-    Generic scaling function that works for all memory types using framework config.
+def _scale_pyclesperanto(result: Any, target_dtype: Any) -> Any:
+    """Compatibility adapter for the pyclesperanto scaling leaf."""
 
-    This single function replaces 6 nearly-identical scaling functions.
-    """
-    # Special case: pyclesperanto
-    if mem_type == MemoryType.PYCLESPERANTO:
-        return _scale_pyclesperanto(result, target_dtype)
-
-    config = _FRAMEWORK_CONFIG[mem_type]
-    ops = config["scaling_ops"]
-    mod = optional_import(mem_type.value)  # noqa: F841 (used in eval)
-    if mod is None:
-        return result
-
-    if not hasattr(result, "dtype"):
-        return result
-
-    # Extra imports (e.g., jax.numpy) - load first as dtype_map might need it
-    if "extra_import" in ops:
-        jnp = optional_import(ops["extra_import"])  # noqa: F841 (used in eval)
-
-    # Handle dtype mapping for frameworks that need it
-    target_dtype_mapped = target_dtype  # noqa: F841 (used in eval)
-    if ops.get("needs_dtype_map"):
-        # Use jnp for JAX, mod for others
-        dtype_module = jnp if "extra_import" in ops and jnp is not None else mod
-        dtype_map = {
-            np.uint8: dtype_module.uint8,
-            np.int8: dtype_module.int8,
-            np.int16: dtype_module.int16,
-            np.int32: dtype_module.int32,
-            np.int64: dtype_module.int64,
-            np.float16: dtype_module.float16,
-            np.float32: dtype_module.float32,
-            np.float64: dtype_module.float64,
-        }
-        target_dtype_mapped = dtype_map.get(target_dtype, dtype_module.float32)  # noqa: F841
-
-    # Check if conversion needed (float → int)
-    result_is_float = eval(ops["check_float"])
-    target_is_int = eval(ops["check_int"])
-
-    if not (result_is_float and target_is_int):
-        # Direct conversion
-        return eval(ops["astype"])
-
-    # Get min/max
-    result_min = eval(ops["min"])  # noqa: F841 (used in eval)
-    result_max = eval(ops["max"])  # noqa: F841 (used in eval)
-
-    if result_max <= result_min:
-        # Constant image
-        return eval(ops["astype"])
-
-    # Normalize to [0, 1]
-    normalized = (result - result_min) / (result_max - result_min)  # noqa: F841 (used in eval)
-
-    # Scale to target range
-    if hasattr(target_dtype, "__name__"):
-        dtype_name = target_dtype.__name__
-    else:
-        dtype_name = str(target_dtype).split(".")[-1]
-
-    if dtype_name in _SCALING_RANGES:
-        range_info = _SCALING_RANGES[dtype_name]
-        if isinstance(range_info, tuple):
-            scale_val, offset_val = range_info
-            result = normalized * scale_val - offset_val  # noqa: F841 (used in eval)
-            # Clamp to avoid float32 precision overflow
-            # For int32: range is [-2147483648, 2147483647]
-            # But float32 cannot precisely represent 2147483647, it rounds to 2147483648
-            # float32 has ~7 decimal digits of precision, so large integers lose precision
-            # We need to use a max value that's safely below INT32_MAX when rounded
-            # Subtracting 128 gives us a safe margin while still using most of the range
-            min_val = -offset_val  # noqa: F841 (used in eval)
-            max_val = (
-                scale_val - offset_val - 128
-            )  # Safe margin for float32 precision  # noqa: F841 E501
-        else:
-            result = normalized * range_info  # noqa: F841 (used in eval)
-            # For unsigned types: range is [0, range_info]
-            min_val = 0  # noqa: F841 (used in eval)
-            max_val = range_info  # noqa: F841 (used in eval)
-
-        # Clamp to prevent overflow due to float32 precision issues
-        if ops.get("clamp"):
-            result = eval(ops["clamp"])  # noqa: F841 (used in eval)
-    else:
-        result = normalized  # noqa: F841 (used in eval)
-
-    # Convert dtype
-    return eval(ops["astype"])
+    return MemoryType.PYCLESPERANTO.scale_dtype(result, target_dtype)
 
 
-def _scale_pyclesperanto(result, target_dtype):
-    """Scale pyclesperanto results (GPU operations require special handling)."""
-    cle = optional_import("pyclesperanto")
-    if cle is None or not hasattr(result, "dtype"):
-        return result
-
-    # Check if result is floating point and target is integer
-    result_is_float = np.issubdtype(result.dtype, np.floating)
-    target_is_int = target_dtype in [np.uint8, np.uint16, np.uint32, np.int8, np.int16, np.int32]
-
-    if not (result_is_float and target_is_int):
-        # Direct conversion
-        return cle.push(cle.pull(result).astype(target_dtype))
-
-    # Get min/max
-    result_min = float(cle.minimum_of_all_pixels(result))
-    result_max = float(cle.maximum_of_all_pixels(result))
-
-    if result_max <= result_min:
-        # Constant image
-        return cle.push(cle.pull(result).astype(target_dtype))
-
-    # Normalize to [0, 1] using GPU operations
-    normalized = cle.subtract_image_from_scalar(result, scalar=result_min)
-    range_val = result_max - result_min
-    normalized = cle.multiply_image_and_scalar(normalized, scalar=1.0 / range_val)
-
-    # Scale to target range
-    dtype_name = target_dtype.__name__
-    if dtype_name in _SCALING_RANGES:
-        range_info = _SCALING_RANGES[dtype_name]
-        if isinstance(range_info, tuple):
-            scale_val, offset_val = range_info
-            scaled = cle.multiply_image_and_scalar(normalized, scalar=scale_val)
-            scaled = cle.subtract_image_from_scalar(scaled, scalar=offset_val)
-        else:
-            scaled = cle.multiply_image_and_scalar(normalized, scalar=range_info)
-    else:
-        scaled = normalized
-
-    # Convert dtype
-    return cle.push(cle.pull(scaled).astype(target_dtype))
-
-
-# Auto-generate all scaling functions using partial application
-_SCALING_FUNCTIONS_GENERATED = {
-    mem_type.value: partial(_scale_generic, mem_type=mem_type) for mem_type in MemoryType
-}
-
-# Registry mapping memory type names to scaling functions (backward compatibility)
-SCALING_FUNCTIONS = _SCALING_FUNCTIONS_GENERATED
+SCALING_FUNCTIONS = MappingProxyType(
+    {memory_type.value: partial(_scale_generic, mem_type=memory_type) for memory_type in MemoryType}
+)

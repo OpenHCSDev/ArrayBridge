@@ -1,8 +1,9 @@
 Conversion system
 =================
 
-``convert_memory(data, source_type, target_type, gpu_id)`` selects the converter
-registered for ``source_type`` and invokes its target method.
+``convert_memory(data, source_type, target_type, gpu_id)`` resolves the source
+and target ``MemoryType`` declarations and lets those declarations perform the
+conversion.
 
 .. code-block:: python
 
@@ -34,8 +35,8 @@ Device semantics
 selection. CPU conversion accepts the same argument for a uniform API. Moving a
 value between two devices is expressed as conversion with the target device id.
 
-Converters prefer framework-native or DLPack paths when the registered strategy
-supports them and otherwise use the strategy's explicit fallback. No zero-copy
+Declarations prefer framework-native or DLPack paths when both endpoints
+support them and otherwise use an explicit NumPy round trip. No zero-copy
 guarantee applies to every pair.
 
 Failures
@@ -43,4 +44,4 @@ Failures
 
 Invalid framework names raise ``ValueError``. Conversion failures raise
 ``MemoryConversionError`` with source/target context. Optional frameworks are
-loaded only when their converter is used.
+loaded only when their declaration is used.

@@ -1,10 +1,11 @@
 [build-system]
-requires = ["hatchling"]
+# Hatchling 1.32 emits Core Metadata 2.5, which Twine 6.2 rejects.
+requires = ["hatchling>=1.28,<1.32"]
 build-backend = "hatchling.build"
 
 [project]
 name = "arraybridge"
-version = "0.2.11"
+version = "0.3.0"
 description = "Unified API for NumPy, CuPy, PyTorch, TensorFlow, JAX, and pyclesperanto with automatic memory type conversion"
 authors = [{name = "Tristan Simas", email = "tristan.simas@mail.mcgill.ca"}]
 license = {text = "MIT"}
@@ -71,6 +72,9 @@ all = [
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "build>=1.0",
+    "twine>=5.0",
+    "packaging>=23.0",
     "black>=23.0",
     "ruff>=0.1.0",
     "mypy>=1.0",

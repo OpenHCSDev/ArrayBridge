@@ -5,19 +5,10 @@ This package provides automatic memory type conversion, declarative decorators,
 and unified utilities for working with multiple array/tensor frameworks.
 """
 
-__version__ = "0.2.11"
+__version__ = "0.3.0"
 
+from . import decorators as _decorators
 from .converters import convert_memory, detect_memory_type
-from .decorators import (
-    DtypeConversion,
-    cupy,
-    jax,
-    memory_types,
-    numpy,
-    pyclesperanto,
-    tensorflow,
-    torch,
-)
 from .dtype_scaling import SCALING_FUNCTIONS
 from .exceptions import MemoryConversionError
 from .framework_config import _FRAMEWORK_CONFIG
@@ -28,6 +19,11 @@ from .slice_processing import process_slices
 from .stack_utils import stack_slices, unstack_slices
 from .types import CPU_MEMORY_TYPES, GPU_MEMORY_TYPES, SUPPORTED_MEMORY_TYPES, MemoryType
 from .utils import _ensure_module, _get_device_id, _supports_dlpack
+
+DtypeConversion = _decorators.DtypeConversion
+memory_types = _decorators.memory_types
+for _memory_type in MemoryType:
+    globals()[_memory_type.value] = getattr(_decorators, _memory_type.value)
 
 __all__ = [
     # Types
@@ -40,12 +36,6 @@ __all__ = [
     "detect_memory_type",
     # Decorators
     "memory_types",
-    "numpy",
-    "cupy",
-    "torch",
-    "tensorflow",
-    "jax",
-    "pyclesperanto",
     "DtypeConversion",
     # Stack utilities
     "stack_slices",
@@ -67,4 +57,4 @@ __all__ = [
     "_ensure_module",
     "_supports_dlpack",
     "_get_device_id",
-]
+] + [memory_type.value for memory_type in MemoryType]

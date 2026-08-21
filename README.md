@@ -25,8 +25,10 @@ copy = convert_memory(
 ```
 
 `convert_memory` requires the declared source type, target type, and device id.
-It uses the registered converter for the source framework. The device id is
-required even for CPU conversions so call sites have one stable signature.
+The source and target `MemoryType` declarations perform conversion directly.
+The device id is required even for CPU conversions so call sites have one
+stable signature. A GPU target must declare that identifier as available;
+ArrayBridge does not silently place the value on the CPU.
 
 ## Declarative decorators
 
@@ -38,11 +40,12 @@ def normalize(image):
     return image / max(float(image.max()), 1.0)
 ```
 
-The framework decorators attach `input_memory_type` and `output_memory_type`
-metadata, provide dtype/slice runtime parameters, and add framework-specific
-stream/OOM handling where supported. They do **not** convert inputs or outputs
-between frameworks and do not accept a `gpu_id` argument. A host runtime must
-call `convert_memory` at the boundary it plans.
+The framework decorators attach `input_memory_type`, `output_memory_type`, and
+`execution_memory_type` metadata, provide dtype/slice runtime parameters, and
+add framework-specific stream/OOM handling where supported. They do **not**
+convert inputs or outputs between frameworks and do not accept a `gpu_id`
+argument. A host runtime must call `convert_memory` at the boundary it plans and
+scope execution using the execution declaration.
 
 ## Stack utilities
 

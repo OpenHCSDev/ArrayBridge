@@ -13,9 +13,7 @@ import logging
 from typing import Any
 
 from arraybridge.converters import detect_memory_type
-from arraybridge.framework_config import _FRAMEWORK_CONFIG
-from arraybridge.types import GPU_MEMORY_TYPES, MemoryType
-from arraybridge.utils import optional_import
+from arraybridge.types import MemoryType
 
 logger = logging.getLogger(__name__)
 
@@ -70,85 +68,9 @@ def _enforce_gpu_device_requirements(memory_type: str, gpu_id: int) -> None:
     Raises:
         ValueError: If gpu_id is negative
     """
-    # For GPU memory types, validate gpu_id
-    if memory_type in {mem_type.value for mem_type in GPU_MEMORY_TYPES}:
-        if gpu_id < 0:
-            raise ValueError(f"Invalid GPU device ID: {gpu_id}. Must be a non-negative integer.")
-
-
-# NOTE: Allocation operations now defined in framework_config.py
-# This eliminates the scattered _ALLOCATION_OPS dict
-
-
-def _allocate_stack_array(
-    memory_type: str, stack_shape: tuple, first_slice: Any, gpu_id: int
-) -> Any:
-    """
-    Allocate a 3D array for stacking slices using framework config.
-
-    Args:
-        memory_type: The target memory type
-        stack_shape: The shape of the stack (Z, Y, X)
-        first_slice: The first slice (used for dtype inference)
-        gpu_id: The GPU device ID
-
-    Returns:
-        Pre-allocated array or None for pyclesperanto
-    """
-    # Convert string to enum
     mem_type = MemoryType(memory_type)
-    config = _FRAMEWORK_CONFIG[mem_type]
-    allocate_expr = config["allocate_stack"]
-
-    # Check if allocation is None (pyclesperanto uses custom stacking)
-    if allocate_expr is None:
-        return None
-
-    # Import the module
-    mod = optional_import(mem_type.value)
-    if mod is None:
-        raise ValueError(f"{mem_type.value} is required for memory type {memory_type}")
-
-    # Handle dtype conversion if needed
-    needs_conversion = config["needs_dtype_conversion"]
-    if callable(needs_conversion):
-        # It's a callable that determines if conversion is needed
-        needs_conversion = needs_conversion(first_slice, detect_memory_type)
-
-    # Initialize variables for eval expressions
-    sample_converted = None
-    if needs_conversion:
-        from arraybridge.converters import convert_memory
-
-        first_slice_source_type = detect_memory_type(first_slice)
-        sample_converted = convert_memory(
-            data=first_slice,
-            source_type=first_slice_source_type,
-            target_type=memory_type,
-            gpu_id=gpu_id,
-        )
-
-    # Set up local variables for eval
-    np = optional_import("numpy")  # noqa: F841
-    cupy = mod if mem_type == MemoryType.CUPY else None  # noqa: F841
-    torch = mod if mem_type == MemoryType.TORCH else None  # noqa: F841
-    tf = mod if mem_type == MemoryType.TENSORFLOW else None  # noqa: F841
-    jnp = optional_import("jax.numpy") if mem_type == MemoryType.JAX else None  # noqa: F841
-    # dtype is used in allocate_expr eval below (for numpy framework)
-    dtype = (  # noqa: F841
-        sample_converted.dtype
-        if sample_converted is not None
-        else (first_slice.dtype if hasattr(first_slice, "dtype") else None)
-    )
-
-    # Execute allocation with context if needed
-    allocate_context = config.get("allocate_context")
-    if allocate_context:
-        context = eval(allocate_context)
-        with context:
-            return eval(allocate_expr)
-    else:
-        return eval(allocate_expr)
+    if mem_type.is_gpu:
+        mem_type.require_device(gpu_id)
 
 
 def stack_slices(slices: list[Any], memory_type: str, gpu_id: int) -> Any:
@@ -183,52 +105,27 @@ def stack_slices(slices: list[Any], memory_type: str, gpu_id: int) -> Any:
     # Check GPU requirements
     _enforce_gpu_device_requirements(memory_type, gpu_id)
 
-    # Pre-allocate the final 3D array to avoid intermediate list and final stack operation
-    first_slice = slices[0]
-    stack_shape = (len(slices), first_slice.shape[0], first_slice.shape[1])
-
-    # Create pre-allocated result array in target memory type using enum dispatch
-    result = _allocate_stack_array(memory_type, stack_shape, first_slice, gpu_id)
-
-    # Convert each slice and assign to result array
+    # Convert each slice and enforce the requested framework-local device.
     conversion_count = 0
-
-    # Check for custom stack handler (pyclesperanto)
     mem_type = MemoryType(memory_type)
-    config = _FRAMEWORK_CONFIG[mem_type]
-    stack_handler = config.get("stack_handler")
+    converted_slices = []
+    for slice_data in slices:
+        source_type = detect_memory_type(slice_data)
+        if source_type == memory_type:
+            converted_data = mem_type.move_to_device(slice_data, gpu_id)
+        else:
+            from arraybridge.converters import convert_memory
 
-    if stack_handler:
-        # Use custom stack handler
-        mod = optional_import(mem_type.value)
-        result = stack_handler(slices, memory_type, gpu_id, mod)
-    else:
-        # Standard stacking logic
-        for i, slice_data in enumerate(slices):
-            source_type = detect_memory_type(slice_data)
+            converted_data = convert_memory(
+                data=slice_data,
+                source_type=source_type,
+                target_type=memory_type,
+                gpu_id=gpu_id,
+            )
+            conversion_count += 1
+        converted_slices.append(converted_data)
 
-            # Track conversions for batch logging
-            if source_type != memory_type:
-                conversion_count += 1
-
-            # Direct conversion
-            if source_type == memory_type:
-                converted_data = slice_data
-            else:
-                from arraybridge.converters import convert_memory
-
-                converted_data = convert_memory(
-                    data=slice_data, source_type=source_type, target_type=memory_type, gpu_id=gpu_id
-                )
-
-            # Assign converted slice using framework-specific handler if available
-            assign_handler = config.get("assign_slice")
-            if assign_handler:
-                # Custom assignment (JAX immutability)
-                result = assign_handler(result, i, converted_data)
-            else:
-                # Standard assignment
-                result[i] = converted_data
+    result = mem_type.stack_arrays(converted_slices, gpu_id)
 
     # 🔍 MEMORY CONVERSION LOGGING: Only log when conversions happen or issues occur
     if conversion_count > 0:
@@ -281,8 +178,7 @@ def unstack_slices(
 
     # Direct conversion
     if source_type == memory_type:
-        # No conversion needed - silent success to reduce log pollution
-        pass
+        array = MemoryType(memory_type).move_to_device(array, gpu_id)
     else:
         # Convert and log the conversion
         from arraybridge.converters import convert_memory

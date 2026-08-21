@@ -22,7 +22,7 @@ sys.path.insert(0, str(PACKAGE_ROOT / "src"))
 project = 'arraybridge'
 copyright = '2025, Tristan Simas'
 author = 'Tristan Simas'
-release = '0.2.11'
+release = '0.3.0'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

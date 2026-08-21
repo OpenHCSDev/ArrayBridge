@@ -9,33 +9,52 @@ This script checks:
 - Dependencies are available
 """
 
-import os
+import argparse
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+import tomllib
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def check_version():
     """Check that version is valid and follows semantic versioning."""
     print("Checking version...")
-    init_file = Path("src/arraybridge/__init__.py")
+    init_file = PROJECT_ROOT / "src/arraybridge/__init__.py"
     if not init_file.exists():
         print("  ❌ src/arraybridge/__init__.py not found")
         return False
-    
-    content = init_file.read_text()
+
+    content = init_file.read_text(encoding="utf-8")
     match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
     if not match:
         print("  ❌ __version__ not found in src/arraybridge/__init__.py")
         return False
-    
+
     version = match.group(1)
     # Basic semantic versioning check
-    if not re.match(r'^\d+\.\d+\.\d+', version):
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?", version):
         print(f"  ❌ Version '{version}' doesn't follow semantic versioning (MAJOR.MINOR.PATCH)")
         return False
-    
+
+    pyproject_version = tomllib.loads(
+        (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]["version"]
+    docs_match = re.search(
+        r"release\s*=\s*['\"]([^'\"]+)",
+        (PROJECT_ROOT / "docs/source/conf.py").read_text(encoding="utf-8"),
+    )
+    docs_version = docs_match.group(1) if docs_match else None
+    if len({version, pyproject_version, docs_version}) != 1:
+        print(
+            "  ❌ Version authorities disagree: "
+            f"package={version}, pyproject={pyproject_version}, docs={docs_version}"
+        )
+        return False
     print(f"  ✅ Version: {version}")
     return True
 
@@ -43,18 +62,18 @@ def check_version():
 def check_pyproject_toml():
     """Check that pyproject.toml exists and has required fields."""
     print("\nChecking pyproject.toml...")
-    pyproject_file = Path("pyproject.toml")
+    pyproject_file = PROJECT_ROOT / "pyproject.toml"
     if not pyproject_file.exists():
         print("  ❌ pyproject.toml not found")
         return False
 
-    content = pyproject_file.read_text()
+    content = pyproject_file.read_text(encoding="utf-8")
     required_fields = {
-        'name': r'name\s*=\s*["\']openhcs["\']',
-        'version': r'version\s*=',
-        'description': r'description\s*=',
-        'authors': r'authors\s*=',
-        'build-backend': r'build-backend\s*=\s*["\']setuptools\.build_meta["\']',
+        "name": r'name\s*=\s*["\']arraybridge["\']',
+        "version": r"version\s*=",
+        "description": r"description\s*=",
+        "authors": r"authors\s*=",
+        "build-backend": r'build-backend\s*=\s*["\']hatchling\.build["\']',
     }
 
     all_found = True
@@ -71,16 +90,16 @@ def check_pyproject_toml():
 def check_readme():
     """Check that README.md exists and is not empty."""
     print("\nChecking README.md...")
-    readme_file = Path("README.md")
+    readme_file = PROJECT_ROOT / "README.md"
     if not readme_file.exists():
         print("  ❌ README.md not found")
         return False
-    
-    content = readme_file.read_text()
+
+    content = readme_file.read_text(encoding="utf-8")
     if len(content.strip()) < 100:
         print("  ⚠️  README.md seems very short")
         return False
-    
+
     print(f"  ✅ README.md exists ({len(content)} chars)")
     return True
 
@@ -88,9 +107,9 @@ def check_readme():
 def check_build_dependencies():
     """Check that build dependencies are installed."""
     print("\nChecking build dependencies...")
-    required = ['build', 'twine', 'packaging', 'requests']
+    required = ["build", "twine", "packaging"]
     missing = []
-    
+
     for package in required:
         try:
             __import__(package)
@@ -98,40 +117,72 @@ def check_build_dependencies():
         except ImportError:
             print(f"  ❌ {package} not installed")
             missing.append(package)
-    
+
     if missing:
         print(f"\n  Install missing packages: pip install {' '.join(missing)}")
         return False
     return True
 
 
-def check_git_status():
-    """Check git status."""
+def check_git_status(*, allow_dirty: bool = False) -> bool:
+    """Prove release commit state, or permit a labeled pre-commit check."""
     print("\nChecking git status...")
     try:
         # Check if we're in a git repo
-        subprocess.run(['git', 'status'], capture_output=True, check=True)
-        
-        # Check for uncommitted changes
-        staged = subprocess.run(['git', 'diff', '--staged', '--quiet'], capture_output=True)
-        unstaged = subprocess.run(['git', 'diff', '--quiet'], capture_output=True)
-        
-        if staged.returncode != 0 or unstaged.returncode != 0:
-            print("  ⚠️  You have uncommitted changes")
-            print("     (This is OK if you plan to commit before release)")
+        subprocess.run(["git", "status"], cwd=PROJECT_ROOT, capture_output=True, check=True)
+
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        if status.stdout:
+            if not allow_dirty:
+                print("  ❌ Working directory has uncommitted changes")
+                return False
+            print("  ⚠️  Pre-commit mode: working directory has uncommitted changes")
         else:
             print("  ✅ Working directory clean")
-        
+
         # Check current branch
-        result = subprocess.run(['git', 'branch', '--show-current'], 
-                              capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=PROJECT_ROOT,
+        )
         branch = result.stdout.strip()
-        if branch != 'main':
-            print(f"  ⚠️  Current branch is '{branch}', not 'main'")
-        else:
-            print(f"  ✅ On main branch")
-        
-        return True
+        if branch == "main":
+            print("  ✅ On main branch")
+            return True
+
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        origin_main = subprocess.run(
+            ["git", "rev-parse", "origin/main"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if head == origin_main:
+            print("  ✅ Detached checkout matches origin/main")
+            return True
+        if allow_dirty:
+            print("  ⚠️  Pre-commit mode: checkout does not yet match origin/main")
+            return True
+
+        print("  ❌ Release checkout must be main or exactly match origin/main")
+        return False
     except subprocess.CalledProcessError:
         print("  ❌ Not a git repository or git not available")
         return False
@@ -141,59 +192,27 @@ def try_build():
     """Try to build the package."""
     print("\nTrying to build package...")
     try:
-        # Clean old builds
-        import shutil
-        for dir_name in ['dist', 'build', 'arraybridge.egg-info']:
-            if Path(dir_name).exists():
-                shutil.rmtree(dir_name)
-                print(f"  🧹 Cleaned {dir_name}/")
-        
-        # Build
-        result = subprocess.run(
-            ['python', '-m', 'build'],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        
-        # Check dist directory
-        dist_files = list(Path('dist').glob('*'))
-        if not dist_files:
-            print("  ❌ Build succeeded but no files in dist/")
-            return False
-        
-        print(f"  ✅ Build successful!")
-        print(f"     Created {len(dist_files)} files:")
-        for f in dist_files:
-            print(f"       - {f.name}")
-        
-        # Try to check with twine
-        try:
-            import glob
-            import shutil
-
-            # Check if twine is available
-            if not shutil.which('twine'):
-                print("  ⚠️  twine not found, skipping metadata check")
-                print("     Install with: pip install twine")
-                print("     (Build succeeded, but metadata not validated)")
-                return True  # Don't fail the build check just because twine is missing
-
-            dist_files = glob.glob('dist/*')
-            result = subprocess.run(
-                ['twine', 'check'] + dist_files,
+        with tempfile.TemporaryDirectory(prefix="arraybridge-dist-") as dist_dir:
+            subprocess.run(
+                [sys.executable, "-m", "build", "--outdir", dist_dir],
+                cwd=PROJECT_ROOT,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
-            print("  ✅ Package metadata valid (twine check passed)")
-        except subprocess.CalledProcessError as e:
-            print("  ❌ Package metadata invalid:")
-            print(f"     {e.stderr}")
-            return False
-        
-        return True
-        
+            dist_files = sorted(Path(dist_dir).glob("*"))
+            if not dist_files:
+                print("  ❌ Build succeeded but produced no distributions")
+                return False
+            subprocess.run(
+                [sys.executable, "-m", "twine", "check", *map(str, dist_files)],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            print("  ✅ Build and package metadata are valid")
+            return True
+
     except subprocess.CalledProcessError as e:
         print("  ❌ Build failed:")
         print(f"     {e.stderr}")
@@ -206,37 +225,44 @@ def try_build():
 def check_github_workflow():
     """Check that GitHub Actions workflow exists."""
     print("\nChecking GitHub Actions workflow...")
-    workflow_file = Path(".github/workflows/publish.yml")
+    workflow_file = PROJECT_ROOT / ".github/workflows/publish.yml"
     if not workflow_file.exists():
         print("  ❌ .github/workflows/publish.yml not found")
         return False
-    
-    content = workflow_file.read_text()
-    if 'PYPI_API_TOKEN' not in content:
-        print("  ❌ PYPI_API_TOKEN not referenced in workflow")
+
+    content = workflow_file.read_text(encoding="utf-8")
+    if "id-token: write" not in content or "pypa/gh-action-pypi-publish" not in content:
+        print("  ❌ Trusted-publishing permissions or action are missing")
         return False
-    
-    print("  ✅ GitHub Actions workflow configured")
-    print("     Remember to set PYPI_API_TOKEN secret in GitHub!")
+
+    print("  ✅ GitHub Actions trusted publishing is configured")
     return True
 
 
-def main():
+def main() -> int:
     """Run all checks."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Run pre-commit build checks without claiming release readiness",
+    )
+    args = parser.parse_args()
+
     print("=" * 60, flush=True)
     print("arraybridge PyPI Release Readiness Check", flush=True)
     print("=" * 60, flush=True)
-    
+
     checks = [
         ("Version", check_version),
         ("pyproject.toml", check_pyproject_toml),
         ("README.md", check_readme),
         ("Build dependencies", check_build_dependencies),
-        ("Git status", check_git_status),
+        ("Git status", lambda: check_git_status(allow_dirty=args.allow_dirty)),
         ("GitHub workflow", check_github_workflow),
         ("Package build", try_build),
     ]
-    
+
     results = {}
     for name, check_func in checks:
         try:
@@ -244,25 +270,33 @@ def main():
         except Exception as e:
             print(f"\n❌ Error checking {name}: {e}")
             results[name] = False
-    
+
     print("\n" + "=" * 60)
     print("Summary")
     print("=" * 60)
-    
+
     passed = sum(results.values())
     total = len(results)
-    
+
     for name, result in results.items():
         status = "✅" if result else "❌"
         print(f"{status} {name}")
-    
+
     print(f"\nPassed: {passed}/{total}")
-    
+
+    if passed == total and args.allow_dirty:
+        print("\n✅ All pre-commit checks passed.")
+        print("\nNext steps:")
+        print("  1. Review, commit, and push the validated version")
+        print("  2. Run this script without --allow-dirty")
+        print("  3. Create and push its annotated v<version> tag")
+        return 0
     if passed == total:
         print("\n🎉 All checks passed! Ready for release!")
         print("\nNext steps:")
-        print("  1. Set PYPI_API_TOKEN in GitHub secrets")
-        print("  2. Run: python scripts/update_and_release.py")
+        print("  1. Commit and push the validated version")
+        print("  2. Create and push its annotated v<version> tag")
+        print("  3. Verify the trusted-publishing workflow")
         return 0
     else:
         print("\n⚠️  Some checks failed. Please fix issues before releasing.")
@@ -271,4 +305,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

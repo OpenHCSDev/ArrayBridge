@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # Needed for badge commit
+  contents: read
   pages: write
   id-token: write
 
@@ -40,7 +40,6 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Run tests with coverage
-        continue-on-error: true  # Continue workflow even if tests fail
         run: |
           mkdir -p site
           python -m pytest --cov=arraybridge \
@@ -50,8 +49,7 @@ jobs:
 
       - name: Generate coverage badge
         run: |
-          mkdir -p .github/badges
-          genbadge coverage -i coverage.xml -o .github/badges/coverage.svg -n "coverage"
+          genbadge coverage -i coverage.xml -o site/coverage-badge.svg -n "coverage"
 
       - name: Create index.html and README
         run: |
@@ -72,7 +70,7 @@ jobs:
           # Create README.md in the site directory
           echo "# arraybridge Code Coverage Reports" > site/README.md
           echo "" >> site/README.md
-          echo "This site contains the code coverage reports for the [arraybridge](https://github.com/trissim/arraybridge) project." >> site/README.md
+          echo "This site contains the code coverage reports for the [arraybridge](https://github.com/OpenHCSDev/arraybridge) project." >> site/README.md
           echo "" >> site/README.md
           echo "## Navigation" >> site/README.md
           echo "" >> site/README.md
@@ -85,19 +83,10 @@ jobs:
           echo "" >> site/README.md
           echo "Last updated: $(date)" >> site/README.md
 
-      - name: Commit and push if coverage badge changed
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add .github/badges/coverage.svg -f
-          git commit -m "chore: update coverage badge" || exit 0
-          git push
-
       - name: Check GitHub Pages status
         run: |
           echo "⚠️ IMPORTANT: Make sure GitHub Pages is enabled in your repository settings!"
-          echo "Go to https://github.com/trissim/arraybridge/settings/pages"
+          echo "Go to https://github.com/OpenHCSDev/arraybridge/settings/pages"
           echo "Set 'Source' to 'GitHub Actions' to enable GitHub Pages deployment."
 
       - name: Setup Pages

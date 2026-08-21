@@ -6,16 +6,14 @@ concrete converter implementations for each framework, and a helper
 function for registry lookups.
 """
 
-import logging
 from abc import abstractmethod
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import ClassVar
 
-import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
-from arraybridge.framework_config import _FRAMEWORK_CONFIG
 from arraybridge.types import MemoryType
-
-logger = logging.getLogger(__name__)
 
 
 class ConverterBase(metaclass=AutoRegisterMeta):
@@ -27,8 +25,8 @@ class ConverterBase(metaclass=AutoRegisterMeta):
 
     __registry_key__ = "memory_type"
     # Simple dict: converters are created in this module, without lazy discovery.
-    __registry__ = {}
-    memory_type: str = None
+    __registry__: ClassVar[Mapping[str, type["ConverterBase"]]] = {}
+    memory_type: str | None = None
 
     @abstractmethod
     def to_numpy(self, data, gpu_id):
@@ -51,76 +49,65 @@ class ConverterBase(metaclass=AutoRegisterMeta):
         pass
 
 
-def _ensure_module(memory_type: str):
-    """Import and return the module for the given memory type."""
-    from arraybridge.utils import _ensure_module as _ensure_module_impl
+def _make_to_numpy(mem_type: MemoryType):
+    def to_numpy(self, data, gpu_id):
+        del self, gpu_id
+        return mem_type.to_numpy(data)
 
-    return _ensure_module_impl(memory_type)
-
-
-def _make_lambda_with_name(expr_str, mem_type, method_name):
-    """Create a lambda from expression string and add proper __name__ for debugging.
-
-    Note: Uses eval() for dynamic code generation from trusted framework_config.py strings.
-    This is safe because:
-    1. Input strings come from _FRAMEWORK_CONFIG, not user input
-    2. Strings are defined at module load time by package maintainers
-    3. This pattern enables declarative framework configuration
-    """
-    module_str = f'_ensure_module("{mem_type.value}")'
-    lambda_expr = f"lambda self, data, gpu_id: {expr_str.format(mod=module_str)}"
-    lambda_func = eval(
-        lambda_expr,
-        {"_ensure_module": _ensure_module, "np": np},
-    )
-    lambda_func.__name__ = method_name
-    lambda_func.__qualname__ = f"{mem_type.value.capitalize()}Converter.{method_name}"
-    return lambda_func
+    to_numpy.__qualname__ = f"{mem_type.value.capitalize()}Converter.to_numpy"
+    return to_numpy
 
 
-def _make_not_implemented(mem_type_value, method_name):
-    """Create a lambda that raises NotImplementedError with the correct signature."""
+def _make_from_numpy(mem_type: MemoryType):
+    def from_numpy(self, data, gpu_id):
+        del self
+        return mem_type.from_numpy(data, gpu_id)
 
-    def not_impl(self, data, gpu_id):
-        raise NotImplementedError(f"DLPack not supported for {mem_type_value}")
+    from_numpy.__qualname__ = f"{mem_type.value.capitalize()}Converter.from_numpy"
+    return from_numpy
 
-    not_impl.__name__ = method_name
-    not_impl.__qualname__ = f"{mem_type_value.capitalize()}Converter.{method_name}"
-    return not_impl
+
+def _make_device_mover(mem_type: MemoryType):
+    """Create a converter adapter over declaration-owned device movement."""
+
+    def move_to_device(self, data, gpu_id):
+        del self
+        return mem_type.move_to_device(data, gpu_id)
+
+    move_to_device.__qualname__ = f"{mem_type.value.capitalize()}Converter.move_to_device"
+    return move_to_device
+
+
+def _make_dlpack_importer(mem_type: MemoryType):
+    """Create a converter adapter over declaration-owned DLPack import."""
+
+    def from_dlpack(self, data, gpu_id):
+        del self
+        module = mem_type.import_module()
+        with mem_type.device_scope(gpu_id, module):
+            return mem_type.from_dlpack(data, module)
+
+    from_dlpack.__qualname__ = f"{mem_type.value.capitalize()}Converter.from_dlpack"
+    return from_dlpack
 
 
 # Auto-generate converter classes for each memory type
 def _create_converter_classes():
     """Create concrete converter classes for each memory type."""
-    converters = {}
-
     for mem_type in MemoryType:
-        config = _FRAMEWORK_CONFIG[mem_type]
-        conversion_ops = config["conversion_ops"]
-
-        # Build class attributes
         class_attrs = {
             "memory_type": mem_type.value,
+            "to_numpy": _make_to_numpy(mem_type),
+            "from_numpy": _make_from_numpy(mem_type),
+            "move_to_device": _make_device_mover(mem_type),
+            "from_dlpack": _make_dlpack_importer(mem_type),
         }
-
-        # Add conversion methods
-        for method_name, expr in conversion_ops.items():
-            if expr is None:
-                class_attrs[method_name] = _make_not_implemented(mem_type.value, method_name)
-            else:
-                class_attrs[method_name] = _make_lambda_with_name(expr, mem_type, method_name)
-
-        # Create the class
         class_name = f"{mem_type.value.capitalize()}Converter"
-        converter_class = type(class_name, (ConverterBase,), class_attrs)
-
-        converters[mem_type] = converter_class
-
-    return converters
+        type(class_name, (ConverterBase,), class_attrs)
 
 
 # Create all converter classes at module load time
-_CONVERTER_CLASSES = _create_converter_classes()
+_create_converter_classes()
 
 
 def get_converter(memory_type: str):
@@ -150,26 +137,13 @@ def _add_converter_methods():
     For each target memory type, generates a method like to_cupy(), to_torch(), etc.
     that tries GPU-to-GPU conversion via DLPack first, then falls back to CPU roundtrip.
     """
-    from arraybridge.utils import _supports_dlpack
-
     for target_type in MemoryType:
         method_name = f"to_{target_type.value}"
 
         def make_method(tgt):
             def method(self, data, gpu_id):
-                # Try GPU-to-GPU first (DLPack)
-                if _supports_dlpack(data):
-                    try:
-                        target_converter = get_converter(tgt.value)
-                        result = target_converter.from_dlpack(data, gpu_id)
-                        return target_converter.move_to_device(result, gpu_id)
-                    except Exception as e:
-                        logger.warning(f"DLPack conversion failed: {e}. Using CPU roundtrip.")
-
-                # CPU roundtrip using polymorphism
-                numpy_data = self.to_numpy(data, gpu_id)
-                target_converter = get_converter(tgt.value)
-                return target_converter.from_numpy(numpy_data, gpu_id)
+                source_type = MemoryType(self.memory_type)
+                return source_type.convert_to(data, tgt, gpu_id)
 
             return method
 
@@ -191,11 +165,10 @@ def _validate_registry():
             msg_parts.append(f"Extra: {extra}")
         raise RuntimeError(f"Registry validation failed. {', '.join(msg_parts)}")
 
-    logger.debug(f"✅ Validated {len(registered_types)} memory type converters in registry")
-
 
 # Add to_X() conversion methods after converter classes are created
 _add_converter_methods()
 
 # Run validation at module load time
 _validate_registry()
+ConverterBase.__registry__ = MappingProxyType(dict(ConverterBase.__registry__))

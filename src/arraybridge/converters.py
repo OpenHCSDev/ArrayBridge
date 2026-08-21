@@ -1,11 +1,10 @@
 """Memory conversion public API for OpenHCS."""
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
-from arraybridge.converters_registry import get_converter
-from arraybridge.framework_config import _FRAMEWORK_CONFIG
+from arraybridge.exceptions import MemoryConversionError
 from arraybridge.types import VALID_MEMORY_TYPES, MemoryType
 
 
@@ -33,14 +32,28 @@ def convert_memory(
     """
     source_name = source_type.value if isinstance(source_type, MemoryType) else source_type
     target_name = target_type.value if isinstance(target_type, MemoryType) else target_type
+    if source_name not in VALID_MEMORY_TYPES:
+        raise ValueError(
+            f"Invalid source_type '{source_name}'. Available types: {sorted(VALID_MEMORY_TYPES)}"
+        )
     if target_name not in VALID_MEMORY_TYPES:
         raise ValueError(
             f"Invalid target_type '{target_name}'. Available types: {sorted(VALID_MEMORY_TYPES)}"
         )
 
-    converter = get_converter(source_name)  # Will raise ValueError if invalid
-    method = getattr(converter, f"to_{target_name}")
-    return method(data, gpu_id)
+    source = MemoryType(source_name)
+    target = MemoryType(target_name)
+    try:
+        return source.convert_to(data, target, gpu_id)
+    except MemoryConversionError:
+        raise
+    except Exception as error:
+        raise MemoryConversionError(
+            source_type=source_name,
+            target_type=target_name,
+            method="MemoryType.convert_to",
+            reason=str(error),
+        ) from error
 
 
 def detect_memory_type(data: Any) -> str:
@@ -58,19 +71,15 @@ def detect_memory_type(data: Any) -> str:
     """
     # NumPy special case (most common, check first)
     if isinstance(data, np.ndarray):
-        return MemoryType.NUMPY.value
+        return cast(str, MemoryType.NUMPY.value)
 
     # Check all frameworks using their module names from config
     module_name = type(data).__module__
 
     top_level = module_name.split(".")[0]
 
-    for mem_type, config in _FRAMEWORK_CONFIG.items():
-        import_name = config["import_name"]
-        aliases = {import_name}
-        if import_name == "jax":
-            aliases.add("jaxlib")
-        if top_level in aliases:
-            return mem_type.value
+    for mem_type in MemoryType:
+        if top_level in mem_type.recognized_module_names:
+            return cast(str, mem_type.value)
 
     raise ValueError(f"Unknown memory type for {type(data)} (module: {module_name})")

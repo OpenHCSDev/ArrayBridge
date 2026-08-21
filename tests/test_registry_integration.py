@@ -77,31 +77,13 @@ class TestRegistryIntegration:
             expected == actual
         ), f"Registry validation failed. Expected: {expected}, Got: {actual}"
 
-    def test_adding_new_framework_would_be_simple(self):
-        """
-        Demonstrate how easy it would be to add a new framework.
-
-        This test shows the benefit: to add a new framework, you would just:
-        1. Add it to MemoryType enum
-        2. Add its config to _FRAMEWORK_CONFIG
-        3. The converter auto-registers - no manual wiring needed!
-        """
+    def test_declarations_generate_converter_registration(self):
+        """Every declaration automatically generates one registered converter."""
         from arraybridge.converters_registry import ConverterBase
         from arraybridge.types import MemoryType
 
-        # Current count
         current_count = len(ConverterBase.__registry__)
-
-        # To add a new framework, you'd just need to:
-        # 1. Add to MemoryType enum (e.g., MXNET = "mxnet")
-        # 2. Add to _FRAMEWORK_CONFIG with conversion_ops
-        # 3. The converter class would auto-register via metaclass!
-
-        # Verify that all current MemoryType values are registered
         assert current_count == len(MemoryType)
-
-        # This is the key benefit: no manual _CONVERTERS[MemoryType.MXNET] = ...
-        # needed anymore!
 
 
 class TestConverterIsolation:

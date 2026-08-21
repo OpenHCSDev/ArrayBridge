@@ -117,45 +117,17 @@ class TestScalingFunctions:
         result = scale_func(arr, np.uint8)
         assert result.dtype == np.uint8
 
-    def test_torch_scaling_unavailable(self):
-        """Test torch scaling when torch is not available."""
-        from unittest.mock import patch
+    @pytest.mark.parametrize(
+        "memory_type",
+        [MemoryType.TORCH, MemoryType.CUPY, MemoryType.PYCLESPERANTO],
+    )
+    def test_scaling_unavailable_framework_returns_input(self, memory_type, monkeypatch):
+        monkeypatch.setattr(MemoryType, "import_if_installed", lambda self: None)
+        arr = np.array([1, 2, 3])
 
+        result = SCALING_FUNCTIONS[memory_type.value](arr, np.float32)
 
-        # Mock optional_import to return None for torch
-        with patch("arraybridge.dtype_scaling.optional_import", return_value=None):
-            scale_func = SCALING_FUNCTIONS["torch"]
-
-            # Should return input unchanged if torch not available
-            arr = np.array([1, 2, 3])
-            result = scale_func(arr, np.float32)
-            assert result is arr
-
-    def test_cupy_scaling_unavailable(self):
-        """Test cupy scaling when cupy is not available."""
-        from unittest.mock import patch
-
-        # Mock optional_import to return None for cupy
-        with patch("arraybridge.dtype_scaling.optional_import", return_value=None):
-            scale_func = SCALING_FUNCTIONS["cupy"]
-
-            # Should return input unchanged if cupy not available
-            arr = np.array([1, 2, 3])
-            result = scale_func(arr, np.float32)
-            assert result is arr
-
-    def test_pyclesperanto_scaling_unavailable(self):
-        """Test pyclesperanto scaling when pyclesperanto is not available."""
-        from unittest.mock import patch
-
-        # Mock optional_import to return None for pyclesperanto
-        with patch("arraybridge.dtype_scaling.optional_import", return_value=None):
-            scale_func = SCALING_FUNCTIONS["pyclesperanto"]
-
-            # Should return input unchanged if pyclesperanto not available
-            arr = np.array([1, 2, 3])
-            result = scale_func(arr, np.uint8)
-            assert result is arr
+        assert result is arr
 
     def test_scaling_non_array_input(self):
         """Test scaling with non-array input."""
@@ -180,32 +152,14 @@ class TestScalingFunctions:
             # Expected for empty arrays due to min/max operations
             pytest.skip("Empty arrays not supported by scaling function (expected)")
 
-    def test_generic_scaling_eval_operations(self):
-        """Test the eval operations in _scale_generic function."""
-        from unittest.mock import MagicMock, patch
-
+    def test_generic_scaling_delegates_to_member_leaf(self):
         from arraybridge.dtype_scaling import _scale_generic
-        from arraybridge.types import MemoryType
 
-        # Mock a framework module
-        mock_mod = MagicMock()
-        mock_mod.float32 = MagicMock()
-        mock_mod.uint8 = MagicMock()
+        values = np.array([0.0, 1.0], dtype=np.float32)
 
-        # Mock optional_import to return our mock module
-        with patch("arraybridge.dtype_scaling.optional_import", return_value=mock_mod):
-            # Create a mock array that looks like it needs scaling
-            mock_arr = MagicMock()
-            mock_arr.dtype = np.float32
+        result = _scale_generic(values, np.uint8, MemoryType.NUMPY)
 
-            # Mock the operations dict for a GPU framework
-
-            # Mock numpy operations
-            with patch("numpy.issubdtype", return_value=True):
-                result = _scale_generic(mock_arr, np.uint8, MemoryType.TORCH)
-
-            # Should have called astype
-            assert result is not None
+        np.testing.assert_array_equal(result, [0, 255])
 
     def test_scaling_ranges_comprehensive(self):
         """Test all scaling ranges are properly defined."""
@@ -286,6 +240,78 @@ class TestScalingFunctions:
         # Should return tensorflow tensor
         assert isinstance(result, tf.Tensor)
         assert result.dtype == tf.int32
+
+    @pytest.mark.parametrize(
+        ("memory_type", "module_name"),
+        [
+            (MemoryType.TORCH, "torch"),
+            (MemoryType.TENSORFLOW, "tensorflow"),
+            (MemoryType.JAX, "jax"),
+        ],
+    )
+    def test_uint16_policy_is_honored_by_typed_frameworks(self, memory_type, module_name):
+        module = pytest.importorskip(module_name)
+        if memory_type is MemoryType.TORCH:
+            values = module.tensor([0.0, 0.5, 1.0], dtype=module.float32)
+        elif memory_type is MemoryType.TENSORFLOW:
+            values = module.constant([0.0, 0.5, 1.0], dtype=module.float32)
+        else:
+            values = module.numpy.asarray([0.0, 0.5, 1.0], dtype=module.numpy.float32)
+
+        result = memory_type.scale_dtype(values, np.uint16, module)
+
+        expected_dtype = module.numpy.uint16 if memory_type is MemoryType.JAX else module.uint16
+        assert result.dtype == expected_dtype
+
+    def test_jax_float64_fails_when_x64_capability_is_disabled(self):
+        module = type(
+            "FakeJax",
+            (),
+            {
+                "config": type("Config", (), {"x64_enabled": False})(),
+                "numpy": object(),
+            },
+        )()
+        values = type("FakeArray", (), {"dtype": np.dtype(np.float32), "device": None})()
+
+        with pytest.raises(ValueError, match="JAX_ENABLE_X64"):
+            MemoryType.JAX.scale_dtype(values, np.float64, module)
+
+    def test_pyclesperanto_scaling_preserves_payload_device(self):
+        class FakeArray:
+            def __init__(self, values, device):
+                self.values = np.asarray(values)
+                self.dtype = self.values.dtype
+                self.device = type("Device", (), {"name": device})()
+
+        class FakePyclesperanto:
+            def __init__(self):
+                self.current = "gpu0"
+
+            def list_available_devices(self, device_type=None):
+                assert device_type in (None, "gpu")
+                return ("gpu0", "gpu1")
+
+            def get_device(self):
+                return self.current
+
+            def select_device(self, selector, device_type=None):
+                assert device_type in (None, "gpu")
+                self.current = ("gpu0", "gpu1")[selector] if isinstance(selector, int) else selector
+
+            def pull(self, data):
+                return data.values
+
+            def push(self, data):
+                return FakeArray(data, self.current)
+
+        module = FakePyclesperanto()
+        values = FakeArray([1, 2, 3], "gpu1")
+
+        result = MemoryType.PYCLESPERANTO.scale_dtype(values, np.int32, module)
+
+        assert result.device.name == "gpu1"
+        assert module.current == "gpu0"
 
     def test_pyclesperanto_scaling_with_gpu_array(self):
         """Test pyclesperanto scaling with actual GPU array (when pyclesperanto available)."""
