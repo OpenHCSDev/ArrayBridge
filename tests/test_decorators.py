@@ -1,5 +1,7 @@
 """Tests for arraybridge.decorators module."""
 
+from contextlib import nullcontext
+
 import numpy as np
 import pytest
 
@@ -10,6 +12,10 @@ from arraybridge.decorators import (
     SliceBySliceRuntimeParameter,
     ThreadGPUContext,
     memory_types,
+    wrap_dtype_preserving_callable,
+)
+from arraybridge.decorators import (
+    torch as torch_memory,
 )
 from arraybridge.types import MemoryType
 
@@ -110,6 +116,87 @@ class TestThreadGPUContext:
             None,
         )
 
+    def test_torch_stream_execution_uses_framework_owned_scope(self, monkeypatch):
+        events = []
+
+        class Stream:
+            pass
+
+        class StreamScope:
+            def __init__(self, stream):
+                self.stream = stream
+
+            def __enter__(self):
+                events.append(("enter", self.stream))
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                events.append(("exit", self.stream))
+                return False
+
+        stream = Stream()
+        module = type(
+            "FakeTorch",
+            (),
+            {
+                "cuda": type(
+                    "Cuda",
+                    (),
+                    {
+                        "is_available": staticmethod(lambda: True),
+                        "device_count": staticmethod(lambda: 1),
+                        "current_device": staticmethod(lambda: 0),
+                        "device": staticmethod(lambda _device_id: nullcontext()),
+                        "Stream": staticmethod(lambda: stream),
+                        "stream": staticmethod(StreamScope),
+                    },
+                )()
+            },
+        )()
+        monkeypatch.setattr(MemoryType, "import_if_installed", lambda self: module)
+
+        @torch_memory
+        def identity(value):
+            events.append(("call", value))
+            return value
+
+        assert identity("payload") == "payload"
+        assert events == [
+            ("enter", stream),
+            ("call", "payload"),
+            ("exit", stream),
+        ]
+
+    def test_cross_framework_dtype_preservation_uses_portable_identity(
+        self,
+        monkeypatch,
+    ):
+        class TorchDtype:
+            def __str__(self):
+                return "torch.uint16"
+
+        class Array:
+            def __init__(self, dtype):
+                self.dtype = dtype
+
+        converted = []
+
+        def scale_dtype(memory_type, array, target_dtype, module=None):
+            del memory_type, module
+            converted.append(target_dtype)
+            return Array(np.dtype(target_dtype))
+
+        monkeypatch.setattr(MemoryType, "scale_dtype", scale_dtype)
+
+        @memory_types("torch", "jax")
+        def convert(_image):
+            return Array(np.dtype("float32"))
+
+        wrapped = wrap_dtype_preserving_callable(convert, MemoryType.JAX)
+        result = wrapped(Array(TorchDtype()))
+
+        assert converted == ["uint16"]
+        assert result.dtype == np.dtype("uint16")
+
 
 class TestMemoryTypesDecorator:
     """Tests for memory_types decorator."""
@@ -167,6 +254,38 @@ class TestMemoryTypesDecorator:
         assert test_func.input_memory_type == "cupy"
         assert test_func.output_memory_type == "numpy"
         assert test_func.execution_memory_type == "torch"
+
+    def test_dtype_preservation_uses_declared_output_framework(self):
+        torch = pytest.importorskip("torch")
+        from arraybridge.decorators import numpy
+
+        @numpy(input_type="numpy", output_type="torch")
+        def to_torch(value):
+            return torch.as_tensor(value, dtype=torch.float32)
+
+        source = np.arange(12, dtype=np.uint16).reshape(3, 4)
+        result = to_torch(source)
+
+        assert isinstance(result, torch.Tensor)
+        assert result.dtype is torch.uint16
+        assert result.shape == source.shape
+        assert result[0, 0].item() == 0
+        assert result[-1, -1].item() == np.iinfo(np.uint16).max
+
+    def test_slice_stacking_uses_declared_output_framework(self):
+        torch = pytest.importorskip("torch")
+        from arraybridge.decorators import numpy
+
+        @numpy(output_type="torch", slice_by_slice_default=True)
+        def planes_to_torch(value):
+            return torch.as_tensor(value)
+
+        source = np.arange(24, dtype=np.uint16).reshape(3, 2, 4)
+        result = planes_to_torch(source)
+
+        assert isinstance(result, torch.Tensor)
+        assert result.dtype is torch.uint16
+        assert tuple(result.shape) == source.shape
 
     def test_decorator_exports_are_declaration_derived(self):
         import arraybridge
@@ -348,3 +467,30 @@ class TestDecoratorParameters:
             **{SliceBySliceRuntimeParameter.require_parameter_name(): False},
         )
         assert result.shape == arr_3d.shape
+
+    def test_slice_by_slice_default_is_owned_by_decorator_declaration(self):
+        """A callable can declare a non-default slice execution policy once."""
+        import inspect
+
+        from arraybridge.decorators import numpy
+
+        observed_shapes = []
+
+        @numpy(slice_by_slice_default=True)
+        def process_plane(arr):
+            """Process one plane."""
+            observed_shapes.append(arr.shape)
+            return arr
+
+        signature = inspect.signature(process_plane)
+        slice_parameter = signature.parameters[
+            SliceBySliceRuntimeParameter.require_parameter_name()
+        ]
+        assert slice_parameter.default is True
+
+        arr_3d = np.random.rand(3, 10, 10)
+        result = process_plane(arr_3d)
+
+        assert result.shape == arr_3d.shape
+        assert observed_shapes == [(10, 10)] * 3
+        assert "Defaults to True" in (process_plane.__doc__ or "")

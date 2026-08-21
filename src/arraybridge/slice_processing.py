@@ -18,7 +18,7 @@ def process_slices(image, func, args, kwargs, gpu_id=None):
     - Unstacking 3D arrays into 2D slices
     - Processing each slice independently
     - Handling functions that return tuples (main output + special outputs)
-    - Stacking results back into 3D arrays
+    - Stacking results back into 3D arrays in the returned main-output framework
     - Combining special outputs from all slices
 
     Args:
@@ -56,8 +56,18 @@ def process_slices(image, func, args, kwargs, gpu_id=None):
         else:
             main_outputs.append(slice_result)  # Single output
 
-    # Stack main outputs back into 3D array
-    result = stack_slices(main_outputs, memory_type, gpu_id)
+    # Stack main outputs in the framework returned by the callable. The input
+    # framework owns unstacking only; decorators may declare a different output
+    # framework for the per-slice function.
+    if not main_outputs:
+        raise ValueError("Slice processing produced no main outputs to stack")
+    output_memory_type = detect_memory_type(main_outputs[0])
+    output_gpu_id = _get_device_id(main_outputs[0], output_memory_type)
+    result = stack_slices(
+        main_outputs,
+        output_memory_type,
+        0 if output_gpu_id is None else output_gpu_id,
+    )
 
     # If we have special outputs, combine them and return tuple
     if special_outputs_list:

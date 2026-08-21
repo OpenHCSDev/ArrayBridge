@@ -92,6 +92,9 @@ class DtypeConversionConfig(ABC):
 class SliceBySliceRuntimeParameter:
     """Nominal slice-by-slice execution parameter consumed by decorators."""
 
+    preserve_for_execution = True
+    is_semantic_control = True
+
     @classmethod
     def require_parameter_name(cls) -> str:
         return "slice_by_slice"
@@ -105,11 +108,11 @@ class SliceBySliceRuntimeParameter:
         return bool
 
     @classmethod
-    def parameter(cls) -> inspect.Parameter:
+    def parameter(cls, *, default_value: bool | None = None) -> inspect.Parameter:
         return inspect.Parameter(
             cls.require_parameter_name(),
             inspect.Parameter.KEYWORD_ONLY,
-            default=cls.default_value(),
+            default=(cls.default_value() if default_value is None else default_value),
             annotation=cls.annotation_type(),
         )
 
@@ -146,7 +149,8 @@ class DtypeConversionRequest:
     """Runtime data needed to convert one decorated function output."""
 
     array: Any
-    original_dtype: Any
+    original_dtype_name: str | None
+    array_dtype_name: str | None
     scale_func: Callable[[Any, Any], Any]
 
 
@@ -183,8 +187,11 @@ class PreserveInputDtypeConversionRunner(DtypeConversionRunner):
     dtype_conversion = DtypeConversion.PRESERVE_INPUT
 
     def apply(self, request: DtypeConversionRequest) -> Any:
-        if request.original_dtype is not None and request.array.dtype != request.original_dtype:
-            return request.scale_func(request.array, request.original_dtype)
+        if (
+            request.original_dtype_name is not None
+            and request.array_dtype_name != request.original_dtype_name
+        ):
+            return request.scale_func(request.array, request.original_dtype_name)
         return request.array
 
 
@@ -338,13 +345,22 @@ def memory_types(
     return decorator
 
 
-def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
+def wrap_dtype_preserving_callable(
+    func,
+    mem_type: MemoryType,
+    *,
+    slice_by_slice_default: bool = False,
+):
     """
-    Auto-generate dtype preservation wrapper for any memory type.
+    Return a callable with ArrayBridge dtype and slice controls.
 
-    This single function replaces 6 nearly-identical dtype wrapper functions.
+    Host registries can use this public boundary without depending on the
+    complete framework decorator or ArrayBridge internals.
     """
-    scale_func = mem_type.scale_dtype
+    func_name = func.__name__
+    input_memory_type = MemoryType(MemoryContractAttribute.INPUT.read(func, mem_type.value))
+    output_memory_type = MemoryType(MemoryContractAttribute.OUTPUT.read(func, mem_type.value))
+    scale_func = output_memory_type.scale_dtype
 
     @functools.wraps(func)
     def dtype_wrapper(image, *args, **kwargs):
@@ -352,7 +368,7 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
         # preserve-input default explicitly.
         slice_by_slice = kwargs.pop(
             SliceBySliceRuntimeParameter.require_parameter_name(),
-            SliceBySliceRuntimeParameter.default_value(),
+            slice_by_slice_default,
         )
         dtype_config: DtypeConversionConfig = kwargs.pop(
             DtypeConversionConfig.require_parameter_name(),
@@ -362,6 +378,11 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
 
         # Store original dtype
         original_dtype = getattr(image, "dtype", None)
+        original_dtype_name = (
+            None
+            if original_dtype is None
+            else input_memory_type.canonical_dtype_name(original_dtype)
+        )
 
         # Handle slice_by_slice processing for 3D arrays
         if slice_by_slice and hasattr(image, "ndim") and image.ndim == 3:
@@ -376,30 +397,27 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
             return DtypeConversionRunner.for_dtype_conversion(dtype_conversion).apply(
                 DtypeConversionRequest(
                     array=array,
-                    original_dtype=original_dtype,
+                    original_dtype_name=original_dtype_name,
+                    array_dtype_name=output_memory_type.canonical_dtype_name(array.dtype),
                     scale_func=scale_func,
                 )
             )
 
-        try:
-            # Apply dtype conversion to the main output
-            if isinstance(result, tuple):
-                if not result:
-                    return result
-                converted_main = _apply_dtype_conversion(result[0])
-                return (converted_main, *result[1:])
-            return _apply_dtype_conversion(result)
-        except Exception as e:
-            logger.error(
-                f"Error in {mem_type.value} dtype/slice preserving wrapper for {func_name}: {e}"
-            )
-            # Return unmodified result on conversion errors
-            return result
+        # Apply dtype conversion to the main output. Conversion errors are
+        # contract violations and must remain visible to the caller.
+        if isinstance(result, tuple):
+            if not result:
+                return result
+            converted_main = _apply_dtype_conversion(result[0])
+            return (converted_main, *result[1:])
+        return _apply_dtype_conversion(result)
 
     # Update function signature to include new parameters
     try:
         dtype_signature = KeywordOnlySignatureExtension(inspect.signature(func)).with_parameter(
-            SliceBySliceRuntimeParameter.parameter()
+            SliceBySliceRuntimeParameter.parameter(
+                default_value=slice_by_slice_default,
+            )
         )
         dtype_signature = KeywordOnlySignatureExtension(dtype_signature).with_parameter(
             DtypeConversionConfig.parameter()
@@ -415,7 +433,8 @@ def _create_dtype_wrapper(func, mem_type: MemoryType, func_name: str):
                 "Process 3D arrays slice-by-slice.\n"
             )
             dtype_wrapper.__doc__ += (
-                "            Defaults to False. Prevents cross-slice contamination.\n"
+                f"            Defaults to {slice_by_slice_default}. "
+                "Prevents cross-slice contamination when enabled.\n"
             )
 
     except Exception as e:
@@ -444,10 +463,8 @@ def _create_gpu_wrapper(func, mem_type: MemoryType, oom_recovery: bool):
 
             # Define execution function that captures args/kwargs
             def execute_with_stream():
-                if stream is not None:
-                    with stream:
-                        return func(*args, **kwargs)
-                return func(*args, **kwargs)
+                with mem_type.stream_scope(stream, framework):
+                    return func(*args, **kwargs)
 
             # Execute with OOM recovery if enabled
             if oom_recovery:
@@ -470,7 +487,6 @@ def _create_gpu_wrapper(func, mem_type: MemoryType, oom_recovery: bool):
         gpu_wrapper,
         MemoryContractAttribute.OUTPUT.read(func),
     )
-    MemoryContractAttribute.EXECUTION.write(gpu_wrapper, mem_type.value)
 
     return gpu_wrapper
 
@@ -489,6 +505,7 @@ def _create_memory_decorator(mem_type: MemoryType):
         output_type=mem_type.value,
         oom_recovery=True,
         contract=None,
+        slice_by_slice_default=False,
     ):
         """
         Decorator for {mem_type} memory type functions.
@@ -499,6 +516,7 @@ def _create_memory_decorator(mem_type: MemoryType):
             output_type: Expected output memory type (default: {mem_type})
             oom_recovery: Enable automatic OOM recovery (default: True)
             contract: Optional validation function for outputs
+            slice_by_slice_default: Default for the decorator-owned slice control
 
         Returns:
             Decorated function with memory type metadata and dtype preservation
@@ -512,7 +530,11 @@ def _create_memory_decorator(mem_type: MemoryType):
             func = memory_decorator(func)
 
             # Apply dtype preservation wrapper
-            func = _create_dtype_wrapper(func, mem_type, func.__name__)
+            func = wrap_dtype_preserving_callable(
+                func,
+                mem_type,
+                slice_by_slice_default=slice_by_slice_default,
+            )
 
             # Apply GPU wrapper if this is a GPU memory type
             if mem_type.is_gpu:
@@ -548,4 +570,5 @@ __all__ = [
     "PreserveInputDtypeConfig",
     "PRESERVE_INPUT_DTYPE_CONFIG",
     "SliceBySliceRuntimeParameter",
+    "wrap_dtype_preserving_callable",
 ] + [memory_type.value for memory_type in MemoryType]

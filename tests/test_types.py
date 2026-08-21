@@ -145,6 +145,32 @@ class TestMemoryTypeOwnership:
         assert os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] == "true"
         assert os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] == "custom"
 
+    def test_preloaded_framework_reports_late_import_preparation(
+        self,
+        monkeypatch,
+        caplog,
+    ):
+        from arraybridge import types
+
+        module = SimpleNamespace()
+        monkeypatch.delenv("XLA_PYTHON_CLIENT_PREALLOCATE", raising=False)
+        monkeypatch.setitem(types.sys.modules, "jax", module)
+
+        assert MemoryType.JAX.import_if_installed() is module
+        assert os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] == "false"
+        assert "loaded before its ArrayBridge import defaults" in caplog.text
+
+    def test_jax_dlpack_import_repairs_misaligned_torch_views(self):
+        torch = pytest.importorskip("torch")
+        pytest.importorskip("jax")
+
+        source = torch.arange(9, dtype=torch.int32).to(torch.uint16)[1:]
+        assert source.data_ptr() % 16 != 0
+
+        result = MemoryType.TORCH.convert_to(source, MemoryType.JAX, device_id=0)
+
+        assert np.array_equal(np.asarray(result), np.arange(1, 9, dtype=np.uint16))
+
     def test_dlpack_capability_is_owned_by_members(self):
         assert {memory_type for memory_type in MemoryType if memory_type.supports_dlpack} == {
             MemoryType.CUPY,

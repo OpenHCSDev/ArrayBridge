@@ -27,7 +27,9 @@ from .types import (
 from .utils import _ensure_module, _get_device_id, _supports_dlpack
 
 DtypeConversion = _decorators.DtypeConversion
+SliceBySliceRuntimeParameter = _decorators.SliceBySliceRuntimeParameter
 memory_types = _decorators.memory_types
+wrap_dtype_preserving_callable = _decorators.wrap_dtype_preserving_callable
 for _memory_type in MemoryType:
     globals()[_memory_type.value] = getattr(_decorators, _memory_type.value)
 
@@ -44,6 +46,8 @@ __all__ = [
     # Decorators
     "memory_types",
     "DtypeConversion",
+    "SliceBySliceRuntimeParameter",
+    "wrap_dtype_preserving_callable",
     # Stack utilities
     "stack_slices",
     "unstack_slices",

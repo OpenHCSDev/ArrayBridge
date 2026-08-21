@@ -37,6 +37,7 @@ FrameworkCleanup = Callable[[Any], None]
 ActiveDeviceMover = Callable[[Any, Any, int], Any]
 CurrentDeviceResolver = Callable[[Any], int | None]
 StreamFactory = Callable[[Any], Any]
+StreamScopeFactory = Callable[[Any, Any], AbstractContextManager[None]]
 DLPackExporter = Callable[[Any, Any], Any | None]
 DLPackValidator = Callable[[Any, Any], bool]
 OOMMatcher = Callable[[BaseException, Any | None], bool]
@@ -303,6 +304,20 @@ def _torch_stream(module: Any) -> Any:
     return module.cuda.Stream()
 
 
+def _cupy_stream_scope(module: Any, stream: Any) -> AbstractContextManager[None]:
+    del module
+    return cast(AbstractContextManager[None], stream)
+
+
+def _torch_stream_scope(module: Any, stream: Any) -> AbstractContextManager[None]:
+    return cast(AbstractContextManager[None], module.cuda.stream(stream))
+
+
+def _null_stream_scope(module: Any, stream: Any) -> AbstractContextManager[None]:
+    del module, stream
+    return nullcontext()
+
+
 def _has_modern_dlpack_protocol(data: Any) -> bool:
     return callable(getattr(data, "__dlpack__", None)) and callable(
         getattr(data, "__dlpack_device__", None)
@@ -332,10 +347,36 @@ def _tensorflow_from_dlpack(payload: DLPackPayload, module: Any) -> Any:
     return module.experimental.dlpack.from_dlpack(payload.capsule)
 
 
+def _dlpack_data_pointer(data: Any) -> int | None:
+    """Return a protocol source pointer when its framework exposes one."""
+
+    data_ptr = getattr(data, "data_ptr", None)
+    if callable(data_ptr):
+        return int(data_ptr())
+    cuda_interface = getattr(data, "__cuda_array_interface__", None)
+    if isinstance(cuda_interface, dict):
+        pointer, _read_only = cuda_interface.get("data", (None, False))
+        return None if pointer is None else int(pointer)
+    return None
+
+
+def _jax_aligned_dlpack_source(data: Any) -> Any:
+    """Copy a DLPack source only when JAX's 16-byte alignment is unmet."""
+
+    pointer = _dlpack_data_pointer(data)
+    if pointer is None or pointer % 16 == 0:
+        return data
+    for attribute in ("clone", "copy"):
+        copier = getattr(data, attribute, None)
+        if callable(copier):
+            return copier()
+    return data
+
+
 def _jax_from_dlpack(payload: DLPackPayload, module: Any) -> Any:
     if not _has_modern_dlpack_protocol(payload.source):
         return NotImplemented
-    return module.dlpack.from_dlpack(payload.source)
+    return module.dlpack.from_dlpack(_jax_aligned_dlpack_source(payload.source))
 
 
 def _protocol_dlpack(data: Any, module: Any) -> bool:
@@ -455,6 +496,7 @@ class FrameworkRuntime:
     move_to_active_device: ActiveDeviceMover = _identity_device_move
     current_device: CurrentDeviceResolver = _no_current_device
     stream_factory: StreamFactory | None = None
+    stream_scope: StreamScopeFactory = _null_stream_scope
     dlpack_importer: DLPackImporter | None = None
     dlpack_exporter: DLPackExporter | None = None
     dlpack_validator: DLPackValidator = _protocol_dlpack
@@ -525,6 +567,7 @@ class MemoryType(_MemoryTypeFields, Enum):
             move_to_active_device=_cupy_device_move,
             current_device=_cupy_current_device,
             stream_factory=_cupy_stream,
+            stream_scope=_cupy_stream_scope,
             dlpack_importer=_cupy_from_dlpack,
             dlpack_exporter=_protocol_dlpack_export,
             oom_matcher=_cupy_oom,
@@ -547,6 +590,7 @@ class MemoryType(_MemoryTypeFields, Enum):
             move_to_active_device=_torch_device_move,
             current_device=_torch_current_device,
             stream_factory=_torch_stream,
+            stream_scope=_torch_stream_scope,
             dlpack_importer=_torch_from_dlpack,
             dlpack_exporter=_protocol_dlpack_export,
             oom_matcher=_torch_oom,
@@ -625,6 +669,16 @@ class MemoryType(_MemoryTypeFields, Enum):
     def prepare_import(self) -> None:
         """Apply declaration-owned coexistence defaults before framework import."""
 
+        missing_names = tuple(
+            name for name, _value in self.import_environment if name not in os.environ
+        )
+        if missing_names and self.loaded_module() is not None:
+            logger.warning(
+                "%s was loaded before its ArrayBridge import defaults were set; "
+                "the current process cannot guarantee those import-time settings: %s",
+                self.display_name,
+                ", ".join(missing_names),
+            )
         for name, value in self.import_environment:
             os.environ.setdefault(name, value)
 
@@ -644,6 +698,7 @@ class MemoryType(_MemoryTypeFields, Enum):
 
         loaded = self.loaded_module()
         if loaded is not None:
+            self.prepare_import()
             return loaded
         if not self.is_installed():
             return None
@@ -694,6 +749,39 @@ class MemoryType(_MemoryTypeFields, Enum):
         scope = nullcontext() if device_id is None else self.device_scope(device_id, framework)
         with scope:
             return self._operations.scale_dtype(data, target_dtype, framework)
+
+    def canonical_dtype_name(self, dtype: Any) -> str:
+        """Return this framework member's portable dtype identity."""
+
+        return self._operations.dtype_name(dtype)
+
+    def astype(
+        self,
+        data: Any,
+        dtype: Any,
+        module: Any | None = None,
+    ) -> Any:
+        """Cast one array through this framework member's operation leaf."""
+
+        framework = module if module is not None else self.import_module()
+        device_id = self.device_id_of(data, framework)
+        scope = nullcontext() if device_id is None else self.device_scope(device_id, framework)
+        with scope:
+            return self._operations.cast(data, dtype, framework)
+
+    def logical_and(
+        self,
+        left: Any,
+        right: Any,
+        module: Any | None = None,
+    ) -> Any:
+        """Intersect two arrays through this framework member's operation leaf."""
+
+        framework = module if module is not None else self.import_module()
+        device_id = self.device_id_of(left, framework)
+        scope = nullcontext() if device_id is None else self.device_scope(device_id, framework)
+        with scope:
+            return self._operations.logical_and(left, right, framework)
 
     def available_device_ids(self, module: Any | None = None) -> tuple[int, ...]:
         """Return every framework-local GPU device identifier."""
@@ -840,6 +928,18 @@ class MemoryType(_MemoryTypeFields, Enum):
             return None
         framework = module if module is not None else self.import_module()
         return factory(framework)
+
+    def stream_scope(
+        self,
+        stream: Any,
+        module: Any | None = None,
+    ) -> AbstractContextManager[None]:
+        """Return this framework member's execution scope for one stream."""
+
+        if stream is None:
+            return nullcontext()
+        framework = module if module is not None else self.import_module()
+        return self._runtime.stream_scope(framework, stream)
 
     def is_oom_error(self, error: BaseException) -> bool:
         """Classify an error without importing an optional framework."""

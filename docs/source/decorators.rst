@@ -53,3 +53,7 @@ Dtype policy
 Direct calls default to preserving the input dtype. Hosts can pass an object
 implementing ``DtypeConversionConfig`` to select native or explicit output dtype
 behavior.
+
+``wrap_dtype_preserving_callable(func, memory_type)`` exposes the dtype and
+slice-control wrapper as a public integration boundary for host registries that
+already own their memory and processing contracts.

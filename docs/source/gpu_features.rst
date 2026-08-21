@@ -11,7 +11,9 @@ identity.
 Before importing TensorFlow or JAX, their declarations apply coexistence-safe
 defaults with ``setdefault``: TensorFlow memory growth is enabled and JAX GPU
 preallocation is disabled. An environment value supplied by the host is never
-overwritten.
+overwritten. Hosts that import optional frameworks themselves should call
+``MemoryType.prepare_import()`` first. ArrayBridge warns when it encounters an
+already-loaded framework whose import-time defaults were absent.
 
 JAX float64 output requires x64 mode to be enabled before import. ArrayBridge
 raises instead of silently returning float32 when a caller requests float64

@@ -10,6 +10,9 @@ ToNumpy = Callable[[Any, Any], Any]
 FromNumpy = Callable[[Any, Any, int], Any]
 StackArrays = Callable[[Sequence[Any], Any], Any]
 ScaleDtype = Callable[[Any, Any, Any], Any]
+DtypeName = Callable[[Any], str]
+CastArray = Callable[[Any, Any, Any], Any]
+LogicalAnd = Callable[[Any, Any, Any], Any]
 
 _SCALING_RANGES: dict[str, float | tuple[float, float]] = {
     "uint8": 255.0,
@@ -21,7 +24,23 @@ _SCALING_RANGES: dict[str, float | tuple[float, float]] = {
 
 
 def _dtype_name(dtype: Any) -> str:
+    declared_name = getattr(dtype, "name", None)
+    if declared_name is not None:
+        return str(declared_name)
     return getattr(dtype, "__name__", str(dtype).rsplit(".", maxsplit=1)[-1])
+
+
+def _numpy_dtype_name(dtype: Any) -> str:
+    return np.dtype(dtype).name
+
+
+def _torch_dtype_name(dtype: Any) -> str:
+    return str(dtype).rsplit(".", maxsplit=1)[-1]
+
+
+def _tensorflow_dtype_name(dtype: Any) -> str:
+    numpy_dtype = getattr(dtype, "as_numpy_dtype", dtype)
+    return np.dtype(numpy_dtype).name
 
 
 def _scaled_values(result: Any, result_min: Any, result_max: Any, target_dtype: Any) -> Any:
@@ -57,6 +76,15 @@ def _identity_from_numpy(data: Any, module: Any, device_id: int) -> Any:
 
 def _numpy_stack(values: Sequence[Any], module: Any) -> Any:
     return module.stack(values, axis=0)
+
+
+def _numpy_cast(data: Any, dtype: Any, module: Any) -> Any:
+    del module
+    return data.astype(dtype, copy=False)
+
+
+def _module_logical_and(left: Any, right: Any, module: Any) -> Any:
+    return module.logical_and(left, right)
 
 
 def _numpy_scale(result: Any, target_dtype: Any, module: Any) -> Any:
@@ -129,6 +157,10 @@ def _torch_stack(values: Sequence[Any], module: Any) -> Any:
     return module.stack(tuple(values), dim=0)
 
 
+def _torch_cast(data: Any, dtype: Any, module: Any) -> Any:
+    return data.to(dtype=_mapped_dtype(dtype, module))
+
+
 def _mapped_dtype(target_dtype: Any, module: Any) -> Any:
     try:
         dtype_name = np.dtype(target_dtype).name
@@ -173,6 +205,10 @@ def _tensorflow_stack(values: Sequence[Any], module: Any) -> Any:
     return module.stack(tuple(values), axis=0)
 
 
+def _tensorflow_cast(data: Any, dtype: Any, module: Any) -> Any:
+    return module.cast(data, _mapped_dtype(dtype, module))
+
+
 def _tensorflow_scale(result: Any, target_dtype: Any, module: Any) -> Any:
     if not hasattr(result, "dtype"):
         return result
@@ -203,6 +239,14 @@ def _jax_from_numpy(data: Any, module: Any, device_id: int) -> Any:
 
 def _jax_stack(values: Sequence[Any], module: Any) -> Any:
     return module.numpy.stack(tuple(values), axis=0)
+
+
+def _jax_cast(data: Any, dtype: Any, module: Any) -> Any:
+    return data.astype(_mapped_dtype(dtype, module.numpy))
+
+
+def _jax_logical_and(left: Any, right: Any, module: Any) -> Any:
+    return module.numpy.logical_and(left, right)
 
 
 def _jax_scale(result: Any, target_dtype: Any, module: Any) -> Any:
@@ -254,17 +298,18 @@ def _pyclesperanto_stack(values: Sequence[Any], module: Any) -> Any:
     return result
 
 
+def _pyclesperanto_cast(data: Any, dtype: Any, module: Any) -> Any:
+    return module.push(module.pull(data).astype(dtype, copy=False))
+
+
+def _pyclesperanto_logical_and(left: Any, right: Any, module: Any) -> Any:
+    return module.push(np.logical_and(module.pull(left), module.pull(right)))
+
+
 def _pyclesperanto_scale(result: Any, target_dtype: Any, module: Any) -> Any:
     if not hasattr(result, "dtype"):
         return result
-    target_is_int = target_dtype in {
-        np.uint8,
-        np.uint16,
-        np.uint32,
-        np.int8,
-        np.int16,
-        np.int32,
-    }
+    target_is_int = np.issubdtype(np.dtype(target_dtype), np.integer)
     if not (np.issubdtype(result.dtype, np.floating) and target_is_int):
         return module.push(module.pull(result).astype(target_dtype))
     result_min = float(module.minimum_of_all_pixels(result))
@@ -300,6 +345,9 @@ class ArrayOperations:
     from_numpy: FromNumpy
     stack: StackArrays
     scale_dtype: ScaleDtype
+    dtype_name: DtypeName = _numpy_dtype_name
+    cast: CastArray = _numpy_cast
+    logical_and: LogicalAnd = _module_logical_and
 
 
 NUMPY_OPERATIONS = ArrayOperations(
@@ -319,22 +367,30 @@ TORCH_OPERATIONS = ArrayOperations(
     from_numpy=_torch_from_numpy,
     stack=_torch_stack,
     scale_dtype=_torch_scale,
+    dtype_name=_torch_dtype_name,
+    cast=_torch_cast,
 )
 TENSORFLOW_OPERATIONS = ArrayOperations(
     to_numpy=_tensorflow_to_numpy,
     from_numpy=_tensorflow_from_numpy,
     stack=_tensorflow_stack,
     scale_dtype=_tensorflow_scale,
+    dtype_name=_tensorflow_dtype_name,
+    cast=_tensorflow_cast,
 )
 JAX_OPERATIONS = ArrayOperations(
     to_numpy=_jax_to_numpy,
     from_numpy=_jax_from_numpy,
     stack=_jax_stack,
     scale_dtype=_jax_scale,
+    cast=_jax_cast,
+    logical_and=_jax_logical_and,
 )
 PYCLESPERANTO_OPERATIONS = ArrayOperations(
     to_numpy=_pyclesperanto_to_numpy,
     from_numpy=_pyclesperanto_from_numpy,
     stack=_pyclesperanto_stack,
     scale_dtype=_pyclesperanto_scale,
+    cast=_pyclesperanto_cast,
+    logical_and=_pyclesperanto_logical_and,
 )
