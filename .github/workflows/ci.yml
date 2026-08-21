@@ -155,4 +155,4 @@ jobs:
       - name: Run mypy (type checking)
         continue-on-error: true  # Scientific code often has complex types
         run: |
-          mypy src/ --ignore-missing-imports
+          mypy src/

@@ -37,7 +37,7 @@ jobs:
         run: |
           ruff check src/ scripts/
           black --check src/ scripts/
-          mypy src/ --ignore-missing-imports
+          mypy src/
           pytest -q --no-cov
 
       - name: Verify release tag and main ancestry
