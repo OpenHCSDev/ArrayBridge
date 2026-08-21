@@ -17,7 +17,13 @@ from .gpu_cleanup import cleanup_all_gpu_frameworks
 from .oom_recovery import _execute_with_oom_recovery
 from .slice_processing import process_slices
 from .stack_utils import stack_slices, unstack_slices
-from .types import CPU_MEMORY_TYPES, GPU_MEMORY_TYPES, SUPPORTED_MEMORY_TYPES, MemoryType
+from .types import (
+    CPU_MEMORY_TYPES,
+    GPU_MEMORY_TYPES,
+    SUPPORTED_MEMORY_TYPES,
+    MemoryContractAttribute,
+    MemoryType,
+)
 from .utils import _ensure_module, _get_device_id, _supports_dlpack
 
 DtypeConversion = _decorators.DtypeConversion
@@ -28,6 +34,7 @@ for _memory_type in MemoryType:
 __all__ = [
     # Types
     "MemoryType",
+    "MemoryContractAttribute",
     "CPU_MEMORY_TYPES",
     "GPU_MEMORY_TYPES",
     "SUPPORTED_MEMORY_TYPES",

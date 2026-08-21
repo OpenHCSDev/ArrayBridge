@@ -32,6 +32,16 @@ framework that owns the function body even when ``input_type`` or
 ``output_type`` is overridden. Host runtimes use that declaration when scoping
 callable execution; boundary types alone do not prove execution ownership.
 
+Metadata key API
+----------------
+
+``MemoryContractAttribute`` is the public owner of the callable metadata keys:
+``INPUT`` maps to ``input_memory_type``, ``OUTPUT`` maps to
+``output_memory_type``, and ``EXECUTION`` maps to ``execution_memory_type``.
+Each member provides ``read(namespace, default=None)`` and
+``write(namespace, value)`` for object and mapping namespaces. Host libraries
+can consume these members without maintaining a duplicate key registry.
+
 The decorator does not accept ``gpu_id`` or ``clear_cuda_cache``. Device
 selection belongs to explicit conversion or the host runtime. A non-callable
 ``contract`` is stored as declarative metadata; a callable contract validates

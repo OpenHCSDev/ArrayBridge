@@ -13,8 +13,28 @@ from arraybridge.types import (
     SUPPORTED_MEMORY_TYPES,
     VALID_MEMORY_TYPES,
     DLPackPayload,
+    MemoryContractAttribute,
     MemoryType,
 )
+
+
+class TestMemoryContractAttribute:
+    """Tests for the declaration-owned callable metadata protocol."""
+
+    def test_reads_and_writes_object_namespaces(self):
+        namespace = SimpleNamespace()
+
+        MemoryContractAttribute.EXECUTION.write(namespace, "torch")
+
+        assert MemoryContractAttribute.EXECUTION.read(namespace) == "torch"
+
+    def test_reads_and_writes_mapping_namespaces(self):
+        namespace = {}
+
+        MemoryContractAttribute.INPUT.write(namespace, "numpy")
+
+        assert MemoryContractAttribute.INPUT.read(namespace) == "numpy"
+        assert MemoryContractAttribute.OUTPUT.read(namespace) is None
 
 
 class TestMemoryType:

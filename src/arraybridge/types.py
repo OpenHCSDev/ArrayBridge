@@ -10,7 +10,7 @@ import importlib.util
 import logging
 import os
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping, MutableMapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from enum import Enum
@@ -40,6 +40,29 @@ StreamFactory = Callable[[Any], Any]
 DLPackExporter = Callable[[Any, Any], Any | None]
 DLPackValidator = Callable[[Any, Any], bool]
 OOMMatcher = Callable[[BaseException, Any | None], bool]
+
+
+class MemoryContractAttribute(str, Enum):
+    """Callable metadata keys owned by ArrayBridge's decorator contract."""
+
+    INPUT = "input_memory_type"
+    OUTPUT = "output_memory_type"
+    EXECUTION = "execution_memory_type"
+
+    def read(self, namespace: Any, default: Any = None) -> Any:
+        """Read this declaration from an attribute or mapping namespace."""
+
+        if isinstance(namespace, Mapping):
+            return namespace.get(self.value, default)
+        return getattr(namespace, self.value, default)
+
+    def write(self, namespace: Any, value: Any) -> None:
+        """Write this declaration to an attribute or mutable mapping namespace."""
+
+        if isinstance(namespace, MutableMapping):
+            namespace[self.value] = value
+            return
+        setattr(namespace, self.value, value)
 
 
 @dataclass(frozen=True, slots=True)

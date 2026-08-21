@@ -26,7 +26,7 @@ from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttr
 
 from arraybridge.oom_recovery import _execute_with_oom_recovery
 from arraybridge.slice_processing import process_slices
-from arraybridge.types import MemoryType
+from arraybridge.types import MemoryContractAttribute, MemoryType
 
 logger = logging.getLogger(__name__)
 
@@ -328,8 +328,8 @@ def memory_types(
             return result
 
         # Attach memory type metadata
-        setattr(wrapper, "input_memory_type", input_memory_type)
-        setattr(wrapper, "output_memory_type", output_memory_type)
+        MemoryContractAttribute.INPUT.write(wrapper, input_memory_type)
+        MemoryContractAttribute.OUTPUT.write(wrapper, output_memory_type)
         if contract is not None and not callable(contract):
             setattr(wrapper, "__processing_contract__", contract)
 
@@ -462,9 +462,15 @@ def _create_gpu_wrapper(func, mem_type: MemoryType, oom_recovery: bool):
         return func(*args, **kwargs)
 
     # Preserve memory type attributes
-    setattr(gpu_wrapper, "input_memory_type", func.input_memory_type)
-    setattr(gpu_wrapper, "output_memory_type", func.output_memory_type)
-    setattr(gpu_wrapper, "execution_memory_type", mem_type.value)
+    MemoryContractAttribute.INPUT.write(
+        gpu_wrapper,
+        MemoryContractAttribute.INPUT.read(func),
+    )
+    MemoryContractAttribute.OUTPUT.write(
+        gpu_wrapper,
+        MemoryContractAttribute.OUTPUT.read(func),
+    )
+    MemoryContractAttribute.EXECUTION.write(gpu_wrapper, mem_type.value)
 
     return gpu_wrapper
 
@@ -512,7 +518,7 @@ def _create_memory_decorator(mem_type: MemoryType):
             if mem_type.is_gpu:
                 func = _create_gpu_wrapper(func, mem_type, oom_recovery)
 
-            func.execution_memory_type = mem_type.value
+            MemoryContractAttribute.EXECUTION.write(func, mem_type.value)
 
             return func
 
