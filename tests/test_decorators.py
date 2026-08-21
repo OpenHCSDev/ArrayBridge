@@ -279,6 +279,9 @@ class TestMemoryTypesDecorator:
         torch = pytest.importorskip("torch")
         from arraybridge.decorators import numpy
 
+        if not MemoryType.TORCH.available_device_ids(torch):
+            pytest.skip("PyTorch GPU stacking requires an available device")
+
         @numpy(output_type="torch", slice_by_slice_default=True)
         def planes_to_torch(value):
             return torch.as_tensor(value)
