@@ -8,6 +8,7 @@ and unified utilities for working with multiple array/tensor frameworks.
 __version__ = "0.3.0"
 
 from . import decorators as _decorators
+from .array_payload import ArrayPayload
 from .converters import convert_memory, detect_memory_type
 from .dtype_scaling import SCALING_FUNCTIONS
 from .exceptions import MemoryConversionError
@@ -37,6 +38,7 @@ __all__ = [
     # Types
     "MemoryType",
     "MemoryContractAttribute",
+    "ArrayPayload",
     "CPU_MEMORY_TYPES",
     "GPU_MEMORY_TYPES",
     "SUPPORTED_MEMORY_TYPES",

@@ -24,6 +24,7 @@ from typing import Any, ClassVar, TypeVar, cast
 import numpy as np
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 
+from arraybridge.array_payload import ArrayPayload
 from arraybridge.oom_recovery import _execute_with_oom_recovery
 from arraybridge.slice_processing import process_slices
 from arraybridge.types import MemoryContractAttribute, MemoryType
@@ -392,6 +393,8 @@ def wrap_dtype_preserving_callable(
             result = func(image, *args, **kwargs)
 
         def _apply_dtype_conversion(array):
+            if isinstance(array, ArrayPayload):
+                return array.map_array_payload(_apply_dtype_conversion)
             if not hasattr(array, "dtype"):
                 return array
             return DtypeConversionRunner.for_dtype_conversion(dtype_conversion).apply(

@@ -1,10 +1,13 @@
 """Tests for arraybridge.decorators module."""
 
 from contextlib import nullcontext
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pytest
 
+from arraybridge import ArrayPayload
 from arraybridge.decorators import (
     DtypeConversion,
     DtypeConversionConfig,
@@ -388,6 +391,34 @@ class TestFrameworkDecorators:
         assert result[0].dtype == np.uint8
         assert result[0].shape == arr.shape
         assert result[1]["meta"] == "ok"
+
+    def test_numpy_decorator_preserves_nominal_array_payload(self):
+        from arraybridge.decorators import numpy
+
+        @dataclass(frozen=True)
+        class ContextPayload(ArrayPayload):
+            data: Any
+            context: str
+
+            def array_payload_data(self):
+                return self.data
+
+            def with_data(self, data):
+                return type(self)(data=data, context=self.context)
+
+        @numpy
+        def label_image(_image):
+            return ContextPayload(
+                data=np.array([0, 1, 2], dtype=np.int32),
+                context="source-plane-2",
+            )
+
+        result = label_image(np.zeros(3, dtype=np.float32))
+
+        assert isinstance(result, ContextPayload)
+        assert result.context == "source-plane-2"
+        assert result.data.dtype == np.float32
+        np.testing.assert_array_equal(result.data, [0, 1, 2])
 
     def test_cupy_decorator_exists(self):
         """Test that cupy decorator is available."""
