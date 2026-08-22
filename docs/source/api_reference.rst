@@ -12,6 +12,11 @@ Public imports
 ``detect_memory_type`` and ``convert_memory``
   Detection and explicit conversion.
 
+``ArrayGeometry``
+  Framework-neutral shape inspection for arrays and nominal ``ArrayPayload``
+  values. Geometry inspection reads declared shape metadata and does not move
+  device data to host memory.
+
 ``memory_types``, ``numpy``, ``cupy``, ``torch``, ``tensorflow``, ``jax``, ``pyclesperanto``
   Callable memory declarations and wrappers.
 

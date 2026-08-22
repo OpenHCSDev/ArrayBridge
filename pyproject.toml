@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arraybridge"
-version = "0.3.0"
+version = "0.3.1"
 description = "Unified API for NumPy, CuPy, PyTorch, TensorFlow, JAX, and pyclesperanto with automatic memory type conversion"
 authors = [{name = "Tristan Simas", email = "tristan.simas@mail.mcgill.ca"}]
 license = {text = "MIT"}

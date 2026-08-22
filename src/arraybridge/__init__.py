@@ -5,9 +5,10 @@ This package provides automatic memory type conversion, declarative decorators,
 and unified utilities for working with multiple array/tensor frameworks.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 from . import decorators as _decorators
+from .array_geometry import ArrayGeometry
 from .array_payload import ArrayPayload
 from .converters import convert_memory, detect_memory_type
 from .dtype_scaling import SCALING_FUNCTIONS
@@ -39,6 +40,7 @@ __all__ = [
     "MemoryType",
     "MemoryContractAttribute",
     "ArrayPayload",
+    "ArrayGeometry",
     "CPU_MEMORY_TYPES",
     "GPU_MEMORY_TYPES",
     "SUPPORTED_MEMORY_TYPES",
