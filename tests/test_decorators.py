@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from python_introspect import RuntimeParameterDeclarationABC
 
 from arraybridge import ArrayPayload
 from arraybridge.decorators import (
@@ -33,6 +34,13 @@ class TestDtypeConversion:
         assert DtypeConversion.UINT8.value == "uint8"
         assert DtypeConversion.UINT16.value == "uint16"
         assert DtypeConversion.INT16.value == "int16"
+
+    def test_runtime_parameters_are_nominal_declarations(self):
+        assert issubclass(DtypeConversionConfig, RuntimeParameterDeclarationABC)
+        assert issubclass(
+            SliceBySliceRuntimeParameter,
+            RuntimeParameterDeclarationABC,
+        )
         assert DtypeConversion.INT32.value == "int32"
         assert DtypeConversion.FLOAT32.value == "float32"
         assert DtypeConversion.FLOAT64.value == "float64"

@@ -5,7 +5,7 @@ This package provides automatic memory type conversion, declarative decorators,
 and unified utilities for working with multiple array/tensor frameworks.
 """
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 from . import decorators as _decorators
 from .array_geometry import ArrayGeometry

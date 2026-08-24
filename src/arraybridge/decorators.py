@@ -23,6 +23,7 @@ from typing import Any, ClassVar, TypeVar, cast
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
+from python_introspect import RuntimeParameterDeclarationABC
 
 from arraybridge.array_payload import ArrayPayload
 from arraybridge.oom_recovery import _execute_with_oom_recovery
@@ -60,7 +61,7 @@ class DtypeConversion(Enum):
         return dtype_map.get(self, None)
 
 
-class DtypeConversionConfig(ABC):
+class DtypeConversionConfig(RuntimeParameterDeclarationABC):
     """Nominal dtype conversion config surface consumed by decorators."""
 
     @property
@@ -90,7 +91,7 @@ class DtypeConversionConfig(ABC):
         )
 
 
-class SliceBySliceRuntimeParameter:
+class SliceBySliceRuntimeParameter(RuntimeParameterDeclarationABC):
     """Nominal slice-by-slice execution parameter consumed by decorators."""
 
     preserve_for_execution = True
