@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arraybridge"
-version = "0.3.2"
+dynamic = ["version"]
 description = "Unified API for NumPy, CuPy, PyTorch, TensorFlow, JAX, and pyclesperanto with automatic memory type conversion"
 authors = [{name = "Tristan Simas", email = "tristan.simas@mail.mcgill.ca"}]
 license = {text = "MIT"}
@@ -97,6 +97,9 @@ Issues = "https://github.com/OpenHCSDev/arraybridge/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arraybridge"]
+
+[tool.hatch.version]
+path = "src/arraybridge/__init__.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -145,6 +145,58 @@ class TestMemoryTypeOwnership:
         assert os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] == "true"
         assert os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] == "custom"
 
+    def test_subprocess_environment_derives_nvidia_wheel_paths_from_cupy_owner(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        from arraybridge import types
+
+        nvidia_root = tmp_path / "nvidia"
+        cublas_lib = nvidia_root / "cublas" / "lib"
+        runtime_bin = nvidia_root / "cuda_runtime" / "bin"
+        cublas_lib.mkdir(parents=True)
+        runtime_bin.mkdir(parents=True)
+        monkeypatch.setattr(
+            types.importlib.util,
+            "find_spec",
+            lambda name: (
+                SimpleNamespace(submodule_search_locations=(str(nvidia_root),))
+                if name == "nvidia"
+                else None
+            ),
+        )
+        search_variable = "PATH" if os.name == "nt" else "LD_LIBRARY_PATH"
+        original = {search_variable: "/existing", "CUSTOM": "value"}
+
+        prepared = MemoryType.subprocess_environment(original)
+
+        assert original == {search_variable: "/existing", "CUSTOM": "value"}
+        assert prepared[search_variable].split(os.pathsep) == [
+            *sorted((str(cublas_lib), str(runtime_bin))),
+            "/existing",
+        ]
+        assert prepared["CUSTOM"] == "value"
+        assert prepared["TF_FORCE_GPU_ALLOW_GROWTH"] == "true"
+        assert prepared["XLA_PYTHON_CLIENT_PREALLOCATE"] == "false"
+
+    def test_subprocess_environment_preserves_host_values_without_nvidia_wheels(
+        self,
+        monkeypatch,
+    ):
+        from arraybridge import types
+
+        monkeypatch.setattr(types.importlib.util, "find_spec", lambda name: None)
+        original = {
+            "TF_FORCE_GPU_ALLOW_GROWTH": "host",
+            "XLA_PYTHON_CLIENT_PREALLOCATE": "host",
+        }
+
+        prepared = MemoryType.subprocess_environment(original)
+
+        assert prepared == original
+        assert prepared is not original
+
     def test_preloaded_framework_reports_late_import_preparation(
         self,
         monkeypatch,

@@ -16,13 +16,15 @@ EXTERNAL_ROOT = PACKAGE_ROOT.parent
 sys.path.insert(0, str(EXTERNAL_ROOT / "metaclass-registry" / "src"))
 sys.path.insert(0, str(PACKAGE_ROOT / "src"))
 
+from arraybridge import __version__
+
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'arraybridge'
 copyright = '2025, Tristan Simas'
 author = 'Tristan Simas'
-release = '0.3.1'
+release = __version__
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

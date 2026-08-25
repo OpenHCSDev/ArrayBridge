@@ -15,6 +15,11 @@ overwritten. Hosts that import optional frameworks themselves should call
 ``MemoryType.prepare_import()`` first. ArrayBridge warns when it encounters an
 already-loaded framework whose import-time defaults were absent.
 
+``MemoryType.subprocess_environment()`` projects the same member-owned import
+defaults into a child-process environment. The CuPy member also derives native
+library search paths from installed NVIDIA wheels, so a fresh child interpreter
+does not depend on another framework having loaded CUDA libraries first.
+
 JAX float64 output requires x64 mode to be enabled before import. ArrayBridge
 raises instead of silently returning float32 when a caller requests float64
 while that capability is disabled.

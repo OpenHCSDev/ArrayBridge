@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Update ArrayBridge's three version projections without Git side effects."""
+"""Update ArrayBridge's canonical package version without Git side effects."""
 
 import argparse
 import re
@@ -8,39 +8,21 @@ from pathlib import Path
 from packaging.version import InvalidVersion, Version
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-VERSION_FILES = {
-    PROJECT_ROOT
-    / "src/arraybridge/__init__.py": (
-        r"(__version__\s*=\s*['\"])([^'\"]+)(['\"])",
-        "package",
-    ),
-    PROJECT_ROOT
-    / "pyproject.toml": (
-        r"(^version\s*=\s*['\"])([^'\"]+)(['\"])",
-        "project",
-    ),
-    PROJECT_ROOT
-    / "docs/source/conf.py": (
-        r"(^release\s*=\s*['\"])([^'\"]+)(['\"])",
-        "documentation",
-    ),
-}
+VERSION_FILE = PROJECT_ROOT / "src/arraybridge/__init__.py"
+VERSION_PATTERN = r"(__version__\s*=\s*['\"])([^'\"]+)(['\"])"
 
 
 def current_version() -> Version:
-    """Return the agreed version, failing when a projection has drifted."""
-    declared_versions: dict[str, Version] = {}
-    for path, (pattern, projection_name) in VERSION_FILES.items():
-        match = re.search(pattern, path.read_text(encoding="utf-8"), flags=re.MULTILINE)
-        if match is None:
-            raise RuntimeError(f"Version declaration is missing from {path}")
-        declared_versions[projection_name] = Version(match.group(2))
+    """Return the package-owned canonical version."""
 
-    unique_versions = set(declared_versions.values())
-    if len(unique_versions) != 1:
-        declarations = ", ".join(f"{name}={version}" for name, version in declared_versions.items())
-        raise RuntimeError(f"Version projections have drifted: {declarations}")
-    return unique_versions.pop()
+    match = re.search(
+        VERSION_PATTERN,
+        VERSION_FILE.read_text(encoding="utf-8"),
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        raise RuntimeError(f"Version declaration is missing from {VERSION_FILE}")
+    return Version(match.group(2))
 
 
 def update_version(version_text: str) -> None:
@@ -52,19 +34,18 @@ def update_version(version_text: str) -> None:
     if requested <= current:
         raise ValueError(f"New version {requested} must be greater than {current}")
 
-    for path, (pattern, _projection_name) in VERSION_FILES.items():
-        content = path.read_text(encoding="utf-8")
-        updated, count = re.subn(
-            pattern,
-            rf"\g<1>{requested}\g<3>",
-            content,
-            flags=re.MULTILINE,
-        )
-        if count != 1:
-            raise RuntimeError(f"Expected one version declaration in {path}, found {count}")
-        path.write_text(updated, encoding="utf-8")
+    content = VERSION_FILE.read_text(encoding="utf-8")
+    updated, count = re.subn(
+        VERSION_PATTERN,
+        rf"\g<1>{requested}\g<3>",
+        content,
+        flags=re.MULTILINE,
+    )
+    if count != 1:
+        raise RuntimeError(f"Expected one version declaration in {VERSION_FILE}, found {count}")
+    VERSION_FILE.write_text(updated, encoding="utf-8")
 
-    print(f"Updated ArrayBridge version projections to {requested}")
+    print(f"Updated ArrayBridge version to {requested}")
     print("Run scripts/verify_release_ready.py --allow-dirty, then review and commit.")
 
 

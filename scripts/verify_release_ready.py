@@ -16,8 +16,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-import tomllib
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -41,20 +39,6 @@ def check_version():
         print(f"  ❌ Version '{version}' doesn't follow semantic versioning (MAJOR.MINOR.PATCH)")
         return False
 
-    pyproject_version = tomllib.loads(
-        (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )["project"]["version"]
-    docs_match = re.search(
-        r"release\s*=\s*['\"]([^'\"]+)",
-        (PROJECT_ROOT / "docs/source/conf.py").read_text(encoding="utf-8"),
-    )
-    docs_version = docs_match.group(1) if docs_match else None
-    if len({version, pyproject_version, docs_version}) != 1:
-        print(
-            "  ❌ Version authorities disagree: "
-            f"package={version}, pyproject={pyproject_version}, docs={docs_version}"
-        )
-        return False
     print(f"  ✅ Version: {version}")
     return True
 
@@ -70,7 +54,8 @@ def check_pyproject_toml():
     content = pyproject_file.read_text(encoding="utf-8")
     required_fields = {
         "name": r'name\s*=\s*["\']arraybridge["\']',
-        "version": r"version\s*=",
+        "dynamic version": r'dynamic\s*=\s*\[["\']version["\']\]',
+        "version authority": r'path\s*=\s*["\']src/arraybridge/__init__\.py["\']',
         "description": r"description\s*=",
         "authors": r"authors\s*=",
         "build-backend": r'build-backend\s*=\s*["\']hatchling\.build["\']',

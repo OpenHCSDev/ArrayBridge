@@ -42,7 +42,7 @@ jobs:
 
       - name: Verify release tag and main ancestry
         run: |
-          declared_version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          declared_version=$(python -c 'import arraybridge; print(arraybridge.__version__)')
           test "$GITHUB_REF_NAME" = "v$declared_version"
           git fetch origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main

@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterator, Mapping, MutableMapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any, TypeVar, cast
 
 from arraybridge.array_operations import (
@@ -41,6 +42,55 @@ StreamScopeFactory = Callable[[Any, Any], AbstractContextManager[None]]
 DLPackExporter = Callable[[Any, Any], Any | None]
 DLPackValidator = Callable[[Any, Any], bool]
 OOMMatcher = Callable[[BaseException, Any | None], bool]
+SubprocessEnvironmentResolver = Callable[[Mapping[str, str]], dict[str, str]]
+
+
+def _identity_subprocess_environment(
+    environment: Mapping[str, str],
+) -> dict[str, str]:
+    return dict(environment)
+
+
+def _nvidia_wheel_library_paths() -> tuple[str, ...]:
+    """Return native-library directories declared by installed NVIDIA wheels."""
+
+    try:
+        spec = importlib.util.find_spec("nvidia")
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return ()
+    if spec is None or spec.submodule_search_locations is None:
+        return ()
+
+    paths: set[str] = set()
+    for package_root in map(Path, spec.submodule_search_locations):
+        try:
+            components = tuple(package_root.iterdir())
+        except OSError:
+            continue
+        for component in components:
+            for library_directory_name in ("lib", "bin"):
+                candidate = component / library_directory_name
+                if candidate.is_dir():
+                    paths.add(str(candidate))
+    return tuple(sorted(paths))
+
+
+def _nvidia_wheel_subprocess_environment(
+    environment: Mapping[str, str],
+) -> dict[str, str]:
+    """Prepend installed NVIDIA wheel libraries to a child environment."""
+
+    prepared = dict(environment)
+    library_paths = _nvidia_wheel_library_paths()
+    if not library_paths:
+        return prepared
+
+    search_variable = "PATH" if os.name == "nt" else "LD_LIBRARY_PATH"
+    existing_paths = tuple(
+        path for path in prepared.get(search_variable, "").split(os.pathsep) if path
+    )
+    prepared[search_variable] = os.pathsep.join(dict.fromkeys((*library_paths, *existing_paths)))
+    return prepared
 
 
 class MemoryContractAttribute(str, Enum):
@@ -501,6 +551,7 @@ class FrameworkRuntime:
     dlpack_exporter: DLPackExporter | None = None
     dlpack_validator: DLPackValidator = _protocol_dlpack
     oom_matcher: OOMMatcher = _never_oom
+    subprocess_environment: SubprocessEnvironmentResolver = _identity_subprocess_environment
 
 
 class _MemoryTypeFields:
@@ -571,6 +622,7 @@ class MemoryType(_MemoryTypeFields, Enum):
             dlpack_importer=_cupy_from_dlpack,
             dlpack_exporter=_protocol_dlpack_export,
             oom_matcher=_cupy_oom,
+            subprocess_environment=_nvidia_wheel_subprocess_environment,
         ),
         CUPY_OPERATIONS,
     )
@@ -681,6 +733,20 @@ class MemoryType(_MemoryTypeFields, Enum):
             )
         for name, value in self.import_environment:
             os.environ.setdefault(name, value)
+
+    @classmethod
+    def subprocess_environment(
+        cls,
+        environment: Mapping[str, str] | None = None,
+    ) -> dict[str, str]:
+        """Project framework import requirements into a child environment."""
+
+        prepared = dict(os.environ if environment is None else environment)
+        for memory_type in cls:
+            for name, value in memory_type.import_environment:
+                prepared.setdefault(name, value)
+            prepared = memory_type._runtime.subprocess_environment(prepared)
+        return prepared
 
     def loaded_module(self) -> Any | None:
         """Return an already-loaded framework without causing an import."""
