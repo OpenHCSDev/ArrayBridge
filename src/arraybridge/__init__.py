@@ -3,37 +3,49 @@ arraybridge: Unified API for NumPy, CuPy, PyTorch, TensorFlow, JAX, and pyclespe
 
 This package provides automatic memory type conversion, declarative decorators,
 and unified utilities for working with multiple array/tensor frameworks.
+
+Package-root imports stay lightweight: submodule exports load on first
+attribute access instead of at import time. Declaration-only consumers
+(memory-type tables, configuration modules) therefore do not pay the
+NumPy/numcodecs import cost.
 """
 
 __version__ = "0.3.3"
 
-from . import decorators as _decorators
-from .array_geometry import ArrayGeometry
-from .array_payload import ArrayPayload
-from .converters import convert_memory, detect_memory_type
-from .dtype_scaling import SCALING_FUNCTIONS
-from .exceptions import MemoryConversionError
-from .framework_config import _FRAMEWORK_CONFIG
-from .framework_ops import _FRAMEWORK_OPS
-from .gpu_cleanup import cleanup_all_gpu_frameworks
-from .oom_recovery import _execute_with_oom_recovery
-from .slice_processing import process_slices
-from .stack_utils import stack_slices, unstack_slices
-from .types import (
-    CPU_MEMORY_TYPES,
-    GPU_MEMORY_TYPES,
-    SUPPORTED_MEMORY_TYPES,
-    MemoryContractAttribute,
-    MemoryType,
-)
-from .utils import _ensure_module, _get_device_id, _supports_dlpack
-
-DtypeConversion = _decorators.DtypeConversion
-SliceBySliceRuntimeParameter = _decorators.SliceBySliceRuntimeParameter
-memory_types = _decorators.memory_types
-wrap_dtype_preserving_callable = _decorators.wrap_dtype_preserving_callable
-for _memory_type in MemoryType:
-    globals()[_memory_type.value] = getattr(_decorators, _memory_type.value)
+_LAZY_EXPORTS: dict[str, str] = {
+    "MemoryType": ".types",
+    "MemoryContractAttribute": ".types",
+    "ArrayPayload": ".array_payload",
+    "ArrayGeometry": ".array_geometry",
+    "CPU_MEMORY_TYPES": ".types",
+    "GPU_MEMORY_TYPES": ".types",
+    "SUPPORTED_MEMORY_TYPES": ".types",
+    "convert_memory": ".converters",
+    "detect_memory_type": ".converters",
+    "memory_types": ".decorators",
+    "DtypeConversion": ".decorators",
+    "SliceBySliceRuntimeParameter": ".decorators",
+    "wrap_dtype_preserving_callable": ".decorators",
+    "stack_slices": ".stack_utils",
+    "unstack_slices": ".stack_utils",
+    "process_slices": ".slice_processing",
+    "cleanup_all_gpu_frameworks": ".gpu_cleanup",
+    "MemoryConversionError": ".exceptions",
+    "SCALING_FUNCTIONS": ".dtype_scaling",
+    "_FRAMEWORK_CONFIG": ".framework_config",
+    "_FRAMEWORK_OPS": ".framework_ops",
+    "_execute_with_oom_recovery": ".oom_recovery",
+    "_ensure_module": ".utils",
+    "_supports_dlpack": ".utils",
+    "_get_device_id": ".utils",
+    # Decorator exports named after each memory type (numpy, cupy, torch, ...).
+    "numpy": ".decorators",
+    "cupy": ".decorators",
+    "torch": ".decorators",
+    "tensorflow": ".decorators",
+    "jax": ".decorators",
+    "pyclesperanto": ".decorators",
+}
 
 __all__ = [
     # Types
@@ -72,4 +84,26 @@ __all__ = [
     "_ensure_module",
     "_supports_dlpack",
     "_get_device_id",
-] + [memory_type.value for memory_type in MemoryType]
+    "numpy",
+    "cupy",
+    "torch",
+    "tensorflow",
+    "jax",
+    "pyclesperanto",
+]
+
+
+def __getattr__(name: str):
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    import importlib
+
+    value = getattr(importlib.import_module(module_name, __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))

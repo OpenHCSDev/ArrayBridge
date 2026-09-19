@@ -5,6 +5,8 @@ This module defines the MemoryType enum and related constants for managing
 different array/tensor frameworks.
 """
 
+from __future__ import annotations
+
 import importlib
 import importlib.util
 import logging
@@ -17,15 +19,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
-from arraybridge.array_operations import (
-    CUPY_OPERATIONS,
-    JAX_OPERATIONS,
-    NUMPY_OPERATIONS,
-    PYCLESPERANTO_OPERATIONS,
-    TENSORFLOW_OPERATIONS,
-    TORCH_OPERATIONS,
-    ArrayOperations,
-)
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from arraybridge.array_operations import ArrayOperations
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
@@ -561,7 +558,7 @@ class _MemoryTypeFields:
     module_aliases: tuple[str, ...]
     import_environment: tuple[tuple[str, str], ...]
     _runtime: FrameworkRuntime
-    _operations: ArrayOperations
+    _operations_name: str
 
 
 class MemoryType(_MemoryTypeFields, Enum):
@@ -589,8 +586,16 @@ class MemoryType(_MemoryTypeFields, Enum):
         member.module_aliases = cast(tuple[str, ...], module_aliases)
         member.import_environment = cast(tuple[tuple[str, str], ...], import_environment)
         member._runtime = cast(FrameworkRuntime, runtime)
-        member._operations = cast(ArrayOperations, operations)
+        member._operations_name = cast(str, operations)
         return member
+
+    @property
+    def _operations(self) -> "ArrayOperations":
+        """Resolve this declaration's operations registry on first access."""
+
+        from arraybridge import array_operations
+
+        return getattr(array_operations, self._operations_name)
 
     NUMPY = (
         "numpy",
@@ -600,7 +605,7 @@ class MemoryType(_MemoryTypeFields, Enum):
         (),
         (),
         FrameworkRuntime(oom_matcher=_numpy_oom),
-        NUMPY_OPERATIONS,
+        "NUMPY_OPERATIONS",
     )
     CUPY = (
         "cupy",
@@ -624,7 +629,7 @@ class MemoryType(_MemoryTypeFields, Enum):
             oom_matcher=_cupy_oom,
             subprocess_environment=_nvidia_wheel_subprocess_environment,
         ),
-        CUPY_OPERATIONS,
+        "CUPY_OPERATIONS",
     )
     TORCH = (
         "torch",
@@ -647,7 +652,7 @@ class MemoryType(_MemoryTypeFields, Enum):
             dlpack_exporter=_protocol_dlpack_export,
             oom_matcher=_torch_oom,
         ),
-        TORCH_OPERATIONS,
+        "TORCH_OPERATIONS",
     )
     TENSORFLOW = (
         "tensorflow",
@@ -666,7 +671,7 @@ class MemoryType(_MemoryTypeFields, Enum):
             dlpack_validator=_tensorflow_dlpack,
             oom_matcher=_tensorflow_oom,
         ),
-        TENSORFLOW_OPERATIONS,
+        "TENSORFLOW_OPERATIONS",
     )
     JAX = (
         "jax",
@@ -684,7 +689,7 @@ class MemoryType(_MemoryTypeFields, Enum):
             dlpack_exporter=_protocol_dlpack_export,
             oom_matcher=_jax_oom,
         ),
-        JAX_OPERATIONS,
+        "JAX_OPERATIONS",
     )
     PYCLESPERANTO = (
         "pyclesperanto",
@@ -701,7 +706,7 @@ class MemoryType(_MemoryTypeFields, Enum):
             move_to_active_device=_pyclesperanto_device_move,
             oom_matcher=_pyclesperanto_oom,
         ),
-        PYCLESPERANTO_OPERATIONS,
+        "PYCLESPERANTO_OPERATIONS",
     )
 
     @property
