@@ -593,7 +593,8 @@ class MemoryType(_MemoryTypeFields, Enum):
 
         from arraybridge import array_operations
 
-        return getattr(array_operations, self._operations_name)
+        operations: ArrayOperations = getattr(array_operations, self._operations_name)
+        return operations
 
     NUMPY = (
         "numpy",
