@@ -17,9 +17,7 @@ from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, TypeVar, cast
-
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
     from arraybridge.array_operations import ArrayOperations
@@ -568,7 +566,7 @@ class MemoryType(_MemoryTypeFields, Enum):
         cls,
         value: str,
         *declaration: Any,
-    ) -> "MemoryType":
+    ) -> MemoryType:
         (
             import_name,
             display_name,
@@ -590,7 +588,7 @@ class MemoryType(_MemoryTypeFields, Enum):
         return member
 
     @property
-    def _operations(self) -> "ArrayOperations":
+    def _operations(self) -> ArrayOperations:
         """Resolve this declaration's operations registry on first access."""
 
         from arraybridge import array_operations
@@ -958,7 +956,7 @@ class MemoryType(_MemoryTypeFields, Enum):
         payload = data if isinstance(data, DLPackPayload) else DLPackPayload(data, data)
         return importer(payload, framework)
 
-    def convert_to(self, data: Any, target: "MemoryType", device_id: int) -> Any:
+    def convert_to(self, data: Any, target: MemoryType, device_id: int) -> Any:
         """Convert one array through the source and target declarations."""
 
         if self is target:
