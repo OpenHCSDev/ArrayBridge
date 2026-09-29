@@ -264,12 +264,22 @@ class KeywordOnlySignatureExtension:
         return len(parameters)
 
 
-# Thread-local storage for GPU streams and contexts
-_thread_gpu_contexts = threading.local()
-
-
 class ThreadGPUContext:
-    """Thread-local streams keyed by framework-local device identity."""
+    """Runtime-owned thread-local streams keyed by framework/device identity.
+
+    Keep the runtime handle on its importable owner, not in decorator function
+    globals. A retained, unpublished decorated callable is serialized by value;
+    its durable closure must not pull a ``threading.local`` into history.
+    """
+
+    _contexts: ClassVar[threading.local] = threading.local()
+
+    @classmethod
+    def current(cls) -> "ThreadGPUContext":
+        """Return this thread's runtime context without serializing its handle."""
+        if not hasattr(cls._contexts, "context"):
+            cls._contexts.context = cls()
+        return cls._contexts.context
 
     def __init__(self):
         self._streams: dict[tuple[MemoryType, int], Any] = {}
@@ -299,13 +309,6 @@ class ThreadGPUContext:
                 threading.current_thread().name,
             )
         return device_id, self._streams[key]
-
-
-def _get_thread_gpu_context():
-    """Get or create thread-local GPU context."""
-    if not hasattr(_thread_gpu_contexts, "context"):
-        _thread_gpu_contexts.context = ThreadGPUContext()
-    return _thread_gpu_contexts.context
 
 
 def memory_types(
@@ -461,7 +464,7 @@ def _create_gpu_wrapper(func, mem_type: MemoryType, oom_recovery: bool):
         # Check if GPU is available for this framework
         if framework is not None and mem_type.available_device_ids(framework):
             # Get thread-local context
-            ctx = _get_thread_gpu_context()
+            ctx = ThreadGPUContext.current()
 
             device_id, stream = ctx.stream_for(mem_type, framework)
 
