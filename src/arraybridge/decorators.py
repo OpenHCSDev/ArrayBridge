@@ -82,11 +82,13 @@ class DtypeConversionConfig(RuntimeParameterDeclarationABC):
         return DtypeConversionConfig
 
     @classmethod
-    def parameter(cls) -> inspect.Parameter:
+    def parameter(
+        cls, *, default_value: "DtypeConversionConfig | None" = None
+    ) -> inspect.Parameter:
         return inspect.Parameter(
             cls.require_parameter_name(),
             inspect.Parameter.KEYWORD_ONLY,
-            default=cls.default_value(),
+            default=cls.default_value() if default_value is None else default_value,
             annotation=cls.annotation_type(),
         )
 
@@ -355,6 +357,7 @@ def wrap_dtype_preserving_callable(
     mem_type: MemoryType,
     *,
     slice_by_slice_default: bool = False,
+    dtype_config_default: DtypeConversionConfig | None = None,
 ):
     """
     Return a callable with ArrayBridge dtype and slice controls.
@@ -366,18 +369,25 @@ def wrap_dtype_preserving_callable(
     input_memory_type = MemoryType(MemoryContractAttribute.INPUT.read(func, mem_type.value))
     output_memory_type = MemoryType(MemoryContractAttribute.OUTPUT.read(func, mem_type.value))
     scale_func = output_memory_type.scale_dtype
+    default_dtype_config = (
+        DtypeConversionConfig.default_value()
+        if dtype_config_default is None
+        else dtype_config_default
+    )
+    if not isinstance(default_dtype_config, DtypeConversionConfig):
+        raise TypeError("Callable dtype default must be a DtypeConversionConfig.")
 
     @functools.wraps(func)
     def dtype_wrapper(image, *args, **kwargs):
         # Pipeline runtimes may inject dtype_config; direct calls use the same
-        # preserve-input default explicitly.
+        # callable-owned default explicitly (preserve-input when undeclared).
         slice_by_slice = kwargs.pop(
             SliceBySliceRuntimeParameter.require_parameter_name(),
             slice_by_slice_default,
         )
         dtype_config: DtypeConversionConfig = kwargs.pop(
             DtypeConversionConfig.require_parameter_name(),
-            DtypeConversionConfig.default_value(),
+            default_dtype_config,
         )
         dtype_conversion = dtype_config.default_dtype_conversion
 
@@ -427,7 +437,7 @@ def wrap_dtype_preserving_callable(
             )
         )
         dtype_signature = KeywordOnlySignatureExtension(dtype_signature).with_parameter(
-            DtypeConversionConfig.parameter()
+            DtypeConversionConfig.parameter(default_value=default_dtype_config)
         )
         setattr(dtype_wrapper, "__signature__", dtype_signature)
 
@@ -513,6 +523,7 @@ def _create_memory_decorator(mem_type: MemoryType):
         oom_recovery=True,
         contract=None,
         slice_by_slice_default=False,
+        dtype_config_default: DtypeConversionConfig | None = None,
     ):
         """
         Decorator for {mem_type} memory type functions.
@@ -524,6 +535,8 @@ def _create_memory_decorator(mem_type: MemoryType):
             oom_recovery: Enable automatic OOM recovery (default: True)
             contract: Optional validation function for outputs
             slice_by_slice_default: Default for the decorator-owned slice control
+            dtype_config_default: Callable-owned dtype policy for direct calls;
+                explicit runtime dtype_config still overrides this default.
 
         Returns:
             Decorated function with memory type metadata and dtype preservation
@@ -541,6 +554,7 @@ def _create_memory_decorator(mem_type: MemoryType):
                 func,
                 mem_type,
                 slice_by_slice_default=slice_by_slice_default,
+                dtype_config_default=dtype_config_default,
             )
 
             # Apply GPU wrapper if this is a GPU memory type
