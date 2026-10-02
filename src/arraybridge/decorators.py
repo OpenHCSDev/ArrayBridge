@@ -266,6 +266,12 @@ class KeywordOnlySignatureExtension:
         return len(parameters)
 
 
+class ThreadGPUContextStorage(threading.local):
+    """Declare the existing native thread-local context slot and its type."""
+
+    context: "ThreadGPUContext | None" = None
+
+
 class ThreadGPUContext:
     """Runtime-owned thread-local streams keyed by framework/device identity.
 
@@ -274,14 +280,16 @@ class ThreadGPUContext:
     its durable closure must not pull a ``threading.local`` into history.
     """
 
-    _contexts: ClassVar[threading.local] = threading.local()
+    _contexts: ClassVar[ThreadGPUContextStorage] = ThreadGPUContextStorage()
 
     @classmethod
     def current(cls) -> "ThreadGPUContext":
         """Return this thread's runtime context without serializing its handle."""
-        if not hasattr(cls._contexts, "context"):
-            cls._contexts.context = cls()
-        return cls._contexts.context
+        context = cls._contexts.context
+        if context is None:
+            context = cls()
+            cls._contexts.context = context
+        return context
 
     def __init__(self):
         self._streams: dict[tuple[MemoryType, int], Any] = {}
