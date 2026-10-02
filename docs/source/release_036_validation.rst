@@ -31,3 +31,28 @@ arraybridge036-mypy-red and arraybridge036-mypy-green. Kernel512MiB,
 no swap, oneCPU/thread,60-second shard. Source behavior and release artifact
 verification are recorded below when complete; no registry success claimed
 by source checks alone.
+
+Original focused behavior suite passes11 tests,0.30s pytest/0.82s total,
+52.7MiB. It covers thread-local context identity/isolation, framework/device
+stream identity, actual NumPy dtype controls, and dill restore of unpublished
+decorated callables with a live unpicklable runtime handle. Assertions and the
+existing three test files are unchanged; no real GPU runtime is needed here.
+
+Original packaged R0 against merged e9aaa262 at source33d5a99f reports zero
+nonzero deltas across both changed product files, exit0,1.93s/43.73MiB. The
+original global NRA R1 remains a separate unfinished OpenHCS tool-owner check;
+this bounded ratchet does not claim that global analysis completed.
+
+Original cached offline uv build produces wheel and sdist, exit0,
+1.26s/66.22MiB. Twine accepts both. Local wheel SHA256:
+f7fa23f5dcf1925742592109b396fe17662fb56f15e1755a304a45c90e79a249;
+local sdist SHA256:
+a558dcb5827876725c854cb367a7598765a55a43e658d82678db4f2c541663d4.
+These local bytes are not assumed equal to the independently hosted rebuild.
+
+Addresses ArrayBridge issue5. Original source proof does not establish a full
+GPU matrix. The unchanged original publisher owns the complete hosted check,
+build and trusted upload. Merge this reviewed source checkpoint without waiting
+on optional CI, push a new annotated v0.3.6 at actual merged main, and verify
+PyPI installer visibility and the hosted wheel source/API before admitting the
+consumer. Do not replace v0.3.5 or replay the failed original publisher.
