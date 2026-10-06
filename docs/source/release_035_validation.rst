@@ -1,5 +1,5 @@
 ArrayBridge 0.3.5 release preparation
-===================================
+=====================================
 
 Parent integration owner; base ea3f2a4cc91c4810d12343f58f85c1195e1a41e6.
 The reviewed callable-native dtype default and durable decorator-context
