@@ -71,3 +71,17 @@ pip install "arraybridge[cupy]"
 ```
 
 Documentation: <https://arraybridge.readthedocs.io>
+
+### Native array geometry
+
+`MemoryType.reshape(array, shape)` and `MemoryType.broadcast_to(array, shape)`
+operate in the array's framework and device. `MemoryType.ones_like(reference,
+shape=..., dtype=...)` allocates on the reference's device; omitting `shape`
+retains its shape. Reshape and broadcast preserve views where the backend can
+represent them. Broadcasting is not a promise of a writable, independent buffer.
+
+These operations never silently project pixels to NumPy. Pyclesperanto cannot
+provide native changed-shape reshape or broadcasting, so those requests raise
+`NotImplementedError`. Its native ones allocation supports one to three
+dimensions and its supported integer/float32 dtypes; boolean allocation is
+explicitly unsupported. Existing conversion and disk boundaries remain separate.

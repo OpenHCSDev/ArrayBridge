@@ -12,7 +12,7 @@ import importlib.util
 import logging
 import os
 import sys
-from collections.abc import Callable, Iterator, Mapping, MutableMapping
+from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from enum import Enum
@@ -834,10 +834,43 @@ class MemoryType(_MemoryTypeFields, Enum):
         """Cast one array through this framework member's operation leaf."""
 
         framework = module if module is not None else self.import_module()
-        device_id = self.device_id_of(data, framework)
-        scope = nullcontext() if device_id is None else self.device_scope(device_id, framework)
-        with scope:
+        with self._array_device_scope(data, framework):
             return self._operations.cast(data, dtype, framework)
+
+    def _array_device_scope(self, reference: Any, module: Any) -> AbstractContextManager[None]:
+        """Derive every native operation scope from its actual input array."""
+        device_id = self.device_id_of(reference, module)
+        return nullcontext() if device_id is None else self.device_scope(device_id, module)
+
+    def reshape(self, data: Any, shape: Sequence[int], module: Any | None = None) -> Any:
+        """Reshape on the input device without an implicit host projection."""
+        framework = module if module is not None else self.import_module()
+        with self._array_device_scope(data, framework):
+            return self._operations.reshape(data, tuple(shape), framework)
+
+    def broadcast_to(self, data: Any, shape: Sequence[int], module: Any | None = None) -> Any:
+        """Broadcast on the input device without an implicit host projection."""
+        framework = module if module is not None else self.import_module()
+        with self._array_device_scope(data, framework):
+            return self._operations.broadcast_to(data, tuple(shape), framework)
+
+    def ones_like(
+        self,
+        reference: Any,
+        *,
+        shape: Sequence[int] | None = None,
+        dtype: Any = bool,
+        module: Any | None = None,
+    ) -> Any:
+        """Allocate ones on the supplied reference's framework-local device."""
+        framework = module if module is not None else self.import_module()
+        with self._array_device_scope(reference, framework):
+            return self._operations.ones_like(
+                reference,
+                tuple(reference.shape if shape is None else shape),
+                dtype,
+                framework,
+            )
 
     def logical_and(
         self,
@@ -848,9 +881,7 @@ class MemoryType(_MemoryTypeFields, Enum):
         """Intersect two arrays through this framework member's operation leaf."""
 
         framework = module if module is not None else self.import_module()
-        device_id = self.device_id_of(left, framework)
-        scope = nullcontext() if device_id is None else self.device_scope(device_id, framework)
-        with scope:
+        with self._array_device_scope(left, framework):
             return self._operations.logical_and(left, right, framework)
 
     def available_device_ids(self, module: Any | None = None) -> tuple[int, ...]:

@@ -1,5 +1,5 @@
 ArrayBridge typed thread-local release correction
-================================================
+=================================================
 
 Parent integration owner. Actual failed original 0.3.5 publisher:
 https://github.com/OpenHCSDev/ArrayBridge/actions/runs/36946585391.

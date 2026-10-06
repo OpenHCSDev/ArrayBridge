@@ -1,7 +1,7 @@
 """Callable defaults use the existing typed dtype policy and real conversion."""
 
-from dataclasses import dataclass
 import inspect
+from dataclasses import dataclass
 
 import numpy as np
 import pytest
@@ -10,6 +10,8 @@ from arraybridge.decorators import (
     DtypeConversion,
     DtypeConversionConfig,
     PreserveInputDtypeConfig,
+)
+from arraybridge.decorators import (
     numpy as numpy_func,
 )
 

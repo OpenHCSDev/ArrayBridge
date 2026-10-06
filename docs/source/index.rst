@@ -20,6 +20,8 @@ applications.
    examples/index
    contributing
    ci-cd
+   release_035_validation
+   release_036_validation
 
 Boundary rule
 -------------
