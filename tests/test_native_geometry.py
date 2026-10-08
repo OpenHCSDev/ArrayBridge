@@ -63,3 +63,18 @@ def test_pycles_geometry_rejects_host_fallback():
         PYCLESPERANTO_OPERATIONS.broadcast_to(source, (4, 2, 3), None)
     with pytest.raises(NotImplementedError, match="dtype"):
         PYCLESPERANTO_OPERATIONS.ones_like(source, (2, 3), bool, None)
+
+
+@pytest.mark.parametrize("dtype", (np.float32, np.complex64, np.int32))
+def test_normalize_planes_preserves_source_and_division_dtype(dtype):
+    source = np.arange(24, dtype=dtype).reshape(2, 3, 4)[:, :, ::-1]
+    original = source.copy()
+    expected = np.stack((source[0] / 3.0, source[1]))
+    actual = MemoryType.NUMPY.normalize_planes(source, dtype, (3.0, None))
+    np.testing.assert_array_equal(actual, expected)
+    np.testing.assert_array_equal(source, original)
+    assert actual.dtype == expected.dtype
+    assert not np.shares_memory(actual, source)
+    for scales in ((3.0,), (3.0, None, 2.0)):
+        with pytest.raises(ValueError, match="leading plane axis"):
+            MemoryType.NUMPY.normalize_planes(source, dtype, scales)

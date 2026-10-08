@@ -804,6 +804,20 @@ class MemoryType(_MemoryTypeFields, Enum):
         with self.device_scope(device_id, framework):
             return self._operations.stack(arrays, framework)
 
+    def normalize_planes(
+        self,
+        data: Any,
+        dtype: Any,
+        scales: Sequence[float | None],
+        module: Any | None = None,
+    ) -> Any:
+        """Normalize one owned plane stack through its native operation owner."""
+        if len(scales) != len(data):
+            raise ValueError("Normalization scales must match the leading plane axis.")
+        framework = module if module is not None else self.import_module()
+        with self._array_device_scope(data, framework):
+            return self._operations.normalize_planes(data, dtype, scales, framework)
+
     def scale_dtype(
         self,
         data: Any,
