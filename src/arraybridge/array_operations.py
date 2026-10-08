@@ -114,8 +114,50 @@ class ArrayOperations(ABC):
     def ones_like(reference: Any, shape: tuple[int, ...], dtype: Any, module: Any) -> Any:
         return module.ones(shape, dtype=dtype)
 
+    @classmethod
+    def normalize_planes(
+        cls,
+        data: Any,
+        dtype: Any,
+        scales: Sequence[float | None],
+        module: Any,
+    ) -> Any:
+        """Cast and scale each plane before assembling its owned output."""
+        return cls.stack(
+            tuple(
+                (
+                    cls.cast(plane, dtype, module)
+                    if scale is None
+                    else cls.cast(plane, dtype, module) / float(scale)
+                )
+                for plane, scale in zip(data, scales, strict=True)
+            ),
+            module,
+        )
 
-class NumpyArrayOperations(ArrayOperations):
+
+class MutableArrayOperations(ArrayOperations):
+    """Arrays whose allocated output supports native in-place arithmetic."""
+
+    @classmethod
+    def normalize_planes(
+        cls,
+        data: Any,
+        dtype: Any,
+        scales: Sequence[float | None],
+        module: Any,
+    ) -> Any:
+        # Integer division promotes the output dtype in the original recipe.
+        if not np.issubdtype(np.dtype(dtype), np.inexact) or len(data) == 0:
+            return super().normalize_planes(data, dtype, scales, module)
+        normalized = module.array(data, dtype=dtype, copy=True)
+        for index, scale in enumerate(scales):
+            if scale is not None:
+                normalized[index] /= float(scale)
+        return normalized
+
+
+class NumpyArrayOperations(MutableArrayOperations):
     """Numpy native operation leaves."""
 
     @staticmethod
@@ -148,7 +190,7 @@ class NumpyArrayOperations(ArrayOperations):
         return scaled.astype(target_dtype)
 
 
-class CupyArrayOperations(ArrayOperations):
+class CupyArrayOperations(MutableArrayOperations):
     """Cupy native operation leaves."""
 
     @staticmethod

@@ -10,7 +10,7 @@ attribute access instead of at import time. Declaration-only consumers
 NumPy/numcodecs import cost.
 """
 
-__version__ = "0.3.7"
+__version__ = "0.3.8"
 
 _LAZY_EXPORTS: dict[str, str] = {
     "MemoryType": ".types",
