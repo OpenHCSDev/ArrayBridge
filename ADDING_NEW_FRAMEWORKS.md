@@ -6,13 +6,17 @@ own framework registry.
 
 ## 1. Define typed leaves
 
-Add an `ArrayOperations` bundle in
-`src/arraybridge/array_operations.py`. It must provide four ordinary callables:
+Add an `ArrayOperations` leaf in `src/arraybridge/array_operations.py`: a
+subclass declaring `memory_type = "<value>"`. It registers itself, and
+`ArrayOperations.for_memory(MemoryType.<MEMBER>)` returns it. It must provide:
 
 - project an array to NumPy;
 - create an array from NumPy on the requested framework-local device;
 - stack prepared 2D arrays into one 3D array;
-- apply the framework's dtype-scaling semantics.
+- apply the framework's dtype-scaling semantics;
+- an override of each namespace primitive (`max`, `mean`, `assign`,
+  `linspace`, ...) whose library call or numeric rule differs from the
+  NumPy-compatible default.
 
 Define device, stream, DLPack, cleanup, and OOM leaves in
 `src/arraybridge/types.py`. Use the no-op defaults in `FrameworkRuntime` only
@@ -27,8 +31,7 @@ Add one `MemoryType` member carrying:
 2. its display name and module aliases;
 3. whether it is GPU-backed;
 4. any environment defaults that must be set before first import;
-5. its `FrameworkRuntime` leaves;
-6. its `ArrayOperations` bundle.
+5. its `FrameworkRuntime` leaves.
 
 The converter classes, target conversion methods, compatibility operation view,
 dtype-scaling view, cleanup adapters, and framework decorator are generated
