@@ -85,3 +85,27 @@ provide native changed-shape reshape or broadcasting, so those requests raise
 `NotImplementedError`. Its native ones allocation supports one to three
 dimensions and its supported integer/float32 dtypes; boolean allocation is
 explicitly unsupported. Existing conversion and disk boundaries remain separate.
+
+### Writing an operation once for every framework
+
+`ArrayOperations.for_memory(memory_type)` returns that framework's operations
+leaf: one registered subclass per `MemoryType`, holding only the primitives its
+library does differently (`max`, `min`, `mean`, `sum`, `astype`,
+`prepend_axis`, `linspace`, `ones`, `assign`, `outer`, `floor`, `accepts`).
+Code written against the leaf runs natively in each framework:
+
+```python
+from arraybridge import MemoryType
+from arraybridge.array_operations import ArrayOperations
+
+
+def max_projection(ops, stack):
+    return ops.prepend_axis(ops.max(stack, 0))
+
+
+ops = ArrayOperations.for_memory(MemoryType.TORCH)
+```
+
+`ops.module` is the framework, imported on first use. Each leaf keeps its
+library's numeric rules: torch, JAX and TensorFlow take means in float32, and
+pyclesperanto reduces only along the leading axis.

@@ -332,7 +332,10 @@ class TestStackUtils:
         assert state["device"] == 0
 
     def test_pyclesperanto_stack_uses_binary_api_and_preserves_singleton_axis(self):
-        from arraybridge.array_operations import PYCLESPERANTO_OPERATIONS
+        from arraybridge.array_operations import ArrayOperations
+        from arraybridge.types import MemoryType
+
+        operations = ArrayOperations.for_memory(MemoryType.PYCLESPERANTO)
 
         class Array:
             def __init__(self, values):
@@ -365,8 +368,8 @@ class TestStackUtils:
         second = Array([[5, 6], [7, 8]])
         third = Array([[9, 10], [11, 12]])
 
-        singleton = PYCLESPERANTO_OPERATIONS.stack([first], Module)
-        stack = PYCLESPERANTO_OPERATIONS.stack([first, second, third], Module)
+        singleton = operations.stack([first], Module)
+        stack = operations.stack([first, second, third], Module)
 
         assert singleton.shape == (1, 2, 2)
         assert stack.shape == (3, 2, 2)
