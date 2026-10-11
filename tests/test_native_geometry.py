@@ -3,8 +3,10 @@
 import numpy as np
 import pytest
 
-from arraybridge.array_operations import PYCLESPERANTO_OPERATIONS
+from arraybridge.array_operations import ArrayOperations
 from arraybridge.types import MemoryType
+
+PYCLESPERANTO_OPERATIONS = ArrayOperations.for_memory(MemoryType.PYCLESPERANTO)
 
 
 def test_numpy_views_and_independent_reference_allocation():

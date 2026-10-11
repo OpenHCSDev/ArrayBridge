@@ -404,8 +404,8 @@ GitHub Actions will automatically:
 
 To add support for a new framework:
 
-1. Add typed array-operation leaves in `array_operations.py`.
-2. Add one `MemoryType` declaration carrying those operations and its runtime leaves.
+1. Add one `ArrayOperations` leaf in `array_operations.py` declaring its `memory_type`.
+2. Add one `MemoryType` declaration carrying its runtime leaves.
 3. Add detection, conversion-pair, stack, cross-device, and optional-dependency tests.
 4. Update the extension and reference documentation.
 

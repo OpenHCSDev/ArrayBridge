@@ -1,10 +1,19 @@
-"""Native array operations carried by MemoryType declarations."""
+"""Native array operations, one family leaf per MemoryType declaration."""
 
-from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from typing import Any
+from __future__ import annotations
+
+from abc import abstractmethod
+from collections.abc import Mapping, Sequence
+from functools import cache, cached_property
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
+from metaclass_registry import AutoRegisterMeta
+
+from arraybridge.array_payload import ArrayPayload
+
+if TYPE_CHECKING:
+    from arraybridge.types import MemoryType
 
 _SCALING_RANGES: dict[str, float | tuple[float, float]] = {
     "uint8": 255.0,
@@ -68,8 +77,84 @@ def _mapped_dtype(target_dtype: Any, module: Any) -> Any:
     return mapped
 
 
-class ArrayOperations(ABC):
-    """Native array semantics selected by the existing MemoryType declaration."""
+@cache
+def _leaf_instance(leaf: type[ArrayOperations]) -> ArrayOperations:
+    return leaf()
+
+
+class ArrayOperations(metaclass=AutoRegisterMeta):
+    """Native array semantics, one registered leaf per ``MemoryType`` value.
+
+    Static leaves take the framework module from their caller (``MemoryType``).
+    Instance primitives are the namespace array-library-neutral code is written
+    against: each leaf supplies only what its library genuinely does differently.
+    """
+
+    __registry_key__ = "memory_type"
+    # Leaves are declared in this module, without lazy discovery.
+    __registry__: ClassVar[Mapping[str, type[ArrayOperations]]] = {}
+    memory_type: ClassVar[str | None] = None
+
+    @classmethod
+    def for_memory(cls, memory_type: MemoryType) -> ArrayOperations:
+        """Return the operations leaf declared for ``memory_type``."""
+        return _leaf_instance(cls.__registry__[memory_type.value])
+
+    @cached_property
+    def module(self) -> Any:
+        """The framework module, imported on first use."""
+        from arraybridge.types import MemoryType
+
+        return MemoryType(self.memory_type).import_module()
+
+    @property
+    def array_module(self) -> Any:
+        """The module holding the framework's array functions."""
+        return self.module
+
+    # ----- primitives for array-library-neutral operations -----
+
+    def accepts(self, value: Any) -> bool:
+        """Whether ``value`` is a native array of this framework."""
+        return isinstance(value, self.module.ndarray)
+
+    def astype(self, data: Any, dtype: Any) -> Any:
+        return self.cast(data, dtype, self.module)
+
+    def max(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        return self.array_module.max(data, axis=axis)
+
+    def min(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        return self.array_module.min(data, axis=axis)
+
+    def mean(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        return self.array_module.mean(data, axis=axis)
+
+    def sum(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        return self.array_module.sum(data, axis=axis)
+
+    def prepend_axis(self, data: Any) -> Any:
+        """Add a leading axis of length one."""
+        return self.reshape(data, (1, *data.shape), self.module)
+
+    def linspace(self, start: float, stop: float, num: int, *, endpoint: bool) -> Any:
+        return self.array_module.linspace(start, stop, num, endpoint=endpoint)
+
+    def ones(self, shape: int | tuple[int, ...], dtype: Any) -> Any:
+        """Allocate ones on the framework's default device."""
+        return self.array_module.ones(shape, dtype=_mapped_dtype(dtype, self.array_module))
+
+    def assign(self, data: Any, index: slice, values: Any) -> Any:
+        """Return ``data`` with ``data[index]`` replaced by ``values``."""
+        data[index] = values
+        return data
+
+    def outer(self, left: Any, right: Any) -> Any:
+        return self.array_module.outer(left, right)
+
+    def floor(self, value: float) -> Any:
+        """Floor a host scalar in the framework's default precision."""
+        return self.array_module.floor(value)
 
     @staticmethod
     @abstractmethod
@@ -160,6 +245,11 @@ class MutableArrayOperations(ArrayOperations):
 class NumpyArrayOperations(MutableArrayOperations):
     """Numpy native operation leaves."""
 
+    memory_type = "numpy"
+
+    def accepts(self, value: Any) -> bool:
+        return isinstance(value, (np.ndarray, ArrayPayload))
+
     @staticmethod
     def to_numpy(data: Any, module: Any) -> Any:
         del module
@@ -193,6 +283,8 @@ class NumpyArrayOperations(MutableArrayOperations):
 class CupyArrayOperations(MutableArrayOperations):
     """Cupy native operation leaves."""
 
+    memory_type = "cupy"
+
     @staticmethod
     def to_numpy(data: Any, module: Any) -> Any:
         del module
@@ -225,6 +317,35 @@ class CupyArrayOperations(MutableArrayOperations):
 
 class TorchArrayOperations(ArrayOperations):
     """Torch native operation leaves."""
+
+    memory_type = "torch"
+
+    def accepts(self, value: Any) -> bool:
+        return isinstance(value, self.module.Tensor)
+
+    def max(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        # CUDA has no uint16 reduction; float32 holds every uint16 exactly.
+        values = data.float() if data.dtype == self.module.uint16 else data
+        return self.module.amax(values, dim=axis).to(data.dtype)
+
+    def min(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        values = data.float() if data.dtype == self.module.uint16 else data
+        return self.module.amin(values, dim=axis).to(data.dtype)
+
+    def mean(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        return self.module.mean(data.float(), dim=axis)
+
+    def sum(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        return self.module.sum(data, dim=axis)
+
+    def linspace(self, start: float, stop: float, num: int, *, endpoint: bool) -> Any:
+        float32 = self.module.float32
+        if endpoint:
+            return self.module.linspace(start, stop, num, dtype=float32)
+        return self.module.linspace(start, stop, num + 1, dtype=float32)[:-1]
+
+    def floor(self, value: float) -> Any:
+        return self.module.floor(self.module.tensor(value))
 
     @staticmethod
     def to_numpy(data: Any, module: Any) -> Any:
@@ -264,11 +385,12 @@ class TorchArrayOperations(ArrayOperations):
 
     @staticmethod
     def cast(data: Any, dtype: Any, module: Any) -> Any:
-        return data.to(dtype=_mapped_dtype(dtype, module))
+        native = dtype if isinstance(dtype, module.dtype) else _mapped_dtype(dtype, module)
+        return data.to(dtype=native)
 
     @staticmethod
     def dtype_name(dtype: Any) -> str:
-        return str(dtype).rsplit(".", maxsplit=1)[-1]
+        return _torch_dtype_name(dtype)
 
     @staticmethod
     def broadcast_to(data: Any, shape: tuple[int, ...], module: Any) -> Any:
@@ -281,6 +403,44 @@ class TorchArrayOperations(ArrayOperations):
 
 class TensorflowArrayOperations(ArrayOperations):
     """Tensorflow native operation leaves."""
+
+    memory_type = "tensorflow"
+
+    def accepts(self, value: Any) -> bool:
+        return isinstance(value, self.module.Tensor)
+
+    def max(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        return self.module.reduce_max(data, axis=axis)
+
+    def min(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        return self.module.reduce_min(data, axis=axis)
+
+    def mean(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        return self.module.reduce_mean(self.module.cast(data, self.module.float32), axis=axis)
+
+    def sum(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        return self.module.reduce_sum(data, axis=axis)
+
+    def linspace(self, start: float, stop: float, num: int, *, endpoint: bool) -> Any:
+        if endpoint:
+            return self.module.linspace(float(start), float(stop), num)
+        return self.module.linspace(float(start), float(stop), num + 1)[:-1]
+
+    def assign(self, data: Any, index: slice, values: Any) -> Any:
+        rows = self.module.range(*index.indices(int(data.shape[0])))
+        return self.module.tensor_scatter_nd_update(
+            data, self.module.reshape(rows, [-1, 1]), values
+        )
+
+    def outer(self, left: Any, right: Any) -> Any:
+        return self.module.tensordot(left, right, axes=0)
+
+    def floor(self, value: float) -> Any:
+        return self.module.math.floor(value)
+
+    @staticmethod
+    def dtype_name(dtype: Any) -> str:
+        return _tensorflow_dtype_name(dtype)
 
     @staticmethod
     def to_numpy(data: Any, module: Any) -> Any:
@@ -312,7 +472,8 @@ class TensorflowArrayOperations(ArrayOperations):
 
     @staticmethod
     def cast(data: Any, dtype: Any, module: Any) -> Any:
-        return module.cast(data, _mapped_dtype(dtype, module))
+        native = dtype if isinstance(dtype, module.dtypes.DType) else _mapped_dtype(dtype, module)
+        return module.cast(data, native)
 
     @staticmethod
     def reshape(data: Any, shape: tuple[int, ...], module: Any) -> Any:
@@ -326,6 +487,22 @@ class TensorflowArrayOperations(ArrayOperations):
 
 class JaxArrayOperations(ArrayOperations):
     """Jax native operation leaves."""
+
+    memory_type = "jax"
+
+    @property
+    def array_module(self) -> Any:
+        return self.module.numpy
+
+    def accepts(self, value: Any) -> bool:
+        return isinstance(value, self.module.numpy.ndarray)
+
+    def mean(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        jnp = self.module.numpy
+        return jnp.mean(data.astype(jnp.float32), axis=axis)
+
+    def assign(self, data: Any, index: slice, values: Any) -> Any:
+        return data.at[index].set(values)
 
     @staticmethod
     def to_numpy(data: Any, module: Any) -> Any:
@@ -387,6 +564,33 @@ class JaxArrayOperations(ArrayOperations):
 
 class PyclesperantoArrayOperations(ArrayOperations):
     """Pyclesperanto native operation leaves."""
+
+    memory_type = "pyclesperanto"
+
+    def accepts(self, value: Any) -> bool:
+        # pyclesperanto kernels push any host array they receive.
+        return hasattr(value, "shape")
+
+    def max(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        _require_z_axis(axis)
+        return self.module.maximum_z_projection(data)
+
+    def min(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        _require_z_axis(axis)
+        return self.module.minimum_z_projection(data)
+
+    def mean(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        _require_z_axis(axis)
+        return self.module.mean_z_projection(data)
+
+    def sum(self, data: Any, axis: int | tuple[int, ...]) -> Any:
+        _require_z_axis(axis)
+        return self.module.sum_z_projection(data)
+
+    def prepend_axis(self, data: Any) -> Any:
+        result = self.module.create((1, *data.shape), dtype=data.dtype)
+        result[0] = data
+        return result
 
     @staticmethod
     def to_numpy(data: Any, module: Any) -> Any:
@@ -484,9 +688,8 @@ class PyclesperantoArrayOperations(ArrayOperations):
         return result
 
 
-NUMPY_OPERATIONS = NumpyArrayOperations()
-CUPY_OPERATIONS = CupyArrayOperations()
-TORCH_OPERATIONS = TorchArrayOperations()
-TENSORFLOW_OPERATIONS = TensorflowArrayOperations()
-JAX_OPERATIONS = JaxArrayOperations()
-PYCLESPERANTO_OPERATIONS = PyclesperantoArrayOperations()
+def _require_z_axis(axis: int | tuple[int, ...]) -> None:
+    if axis != 0:
+        raise NotImplementedError(
+            f"pyclesperanto reduces only along the leading (z) axis, not axis {axis!r}"
+        )
