@@ -390,7 +390,7 @@ class TorchArrayOperations(ArrayOperations):
 
     @staticmethod
     def dtype_name(dtype: Any) -> str:
-        return str(dtype).rsplit(".", maxsplit=1)[-1]
+        return _torch_dtype_name(dtype)
 
     @staticmethod
     def broadcast_to(data: Any, shape: tuple[int, ...], module: Any) -> Any:
@@ -437,6 +437,10 @@ class TensorflowArrayOperations(ArrayOperations):
 
     def floor(self, value: float) -> Any:
         return self.module.math.floor(value)
+
+    @staticmethod
+    def dtype_name(dtype: Any) -> str:
+        return _tensorflow_dtype_name(dtype)
 
     @staticmethod
     def to_numpy(data: Any, module: Any) -> Any:

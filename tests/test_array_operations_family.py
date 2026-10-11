@@ -63,3 +63,12 @@ def test_jax_primitives_are_functional():
     np.testing.assert_array_equal(np.asarray(values), [1, 1, 1, 1])
     stack = jnp.arange(24, dtype=jnp.uint16).reshape(2, 3, 4)
     assert ops.mean(stack, 0).dtype == jnp.float32
+
+
+def test_tensorflow_dtype_names_come_from_the_numpy_dtype():
+    class TensorflowDtype:
+        as_numpy_dtype = np.uint16
+
+    ops = ArrayOperations.for_memory(MemoryType.TENSORFLOW)
+    assert ops.dtype_name(TensorflowDtype()) == "uint16"
+    assert MemoryType.TENSORFLOW.canonical_dtype_name(TensorflowDtype()) == "uint16"
