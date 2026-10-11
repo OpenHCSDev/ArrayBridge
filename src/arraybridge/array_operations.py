@@ -78,8 +78,8 @@ def _mapped_dtype(target_dtype: Any, module: Any) -> Any:
 
 
 @cache
-def _leaf_instance(leaf: type[ArrayOperations]) -> ArrayOperations:
-    return leaf()
+def _leaf_instance(memory_type_value: str) -> ArrayOperations:
+    return ArrayOperations.__registry__[memory_type_value]()
 
 
 class ArrayOperations(metaclass=AutoRegisterMeta):
@@ -98,13 +98,15 @@ class ArrayOperations(metaclass=AutoRegisterMeta):
     @classmethod
     def for_memory(cls, memory_type: MemoryType) -> ArrayOperations:
         """Return the operations leaf declared for ``memory_type``."""
-        return _leaf_instance(cls.__registry__[memory_type.value])
+        return _leaf_instance(memory_type.value)
 
     @cached_property
     def module(self) -> Any:
         """The framework module, imported on first use."""
         from arraybridge.types import MemoryType
 
+        # Only registered leaves are instantiated, and each declares memory_type.
+        assert self.memory_type is not None
         return MemoryType(self.memory_type).import_module()
 
     @property
