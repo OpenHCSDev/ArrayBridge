@@ -154,9 +154,7 @@ def unstack_slices(
         array = library.move_to_device(array, device)
 
     # Extract slices along axis 0 (already in the target memory type)
-    slices = [
-        getattr(array, "__getitem__")(index) for index in range(getattr(array, "shape")[0])
-    ]
+    slices = [getattr(array, "__getitem__")(index) for index in range(getattr(array, "shape")[0])]
 
     # Validate that all extracted slices are 2D if requested
     if validate_slices:

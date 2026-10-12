@@ -12,70 +12,98 @@ Importing this module imports no array library, NumPy included.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, MutableMapping
+import sys
+from collections.abc import Iterator, Mapping, MutableMapping
 from enum import Enum, EnumMeta
 from types import MappingProxyType
+from typing import TypeGuard, TypeVar
 
 from arraybridge.libraries import Array, ArrayLibrary
+
+MemberT = TypeVar("MemberT")
+
+
+def _add_missing_members(enum_class: type) -> None:
+    """Enter a member for every registered library name the enum does not have yet."""
+
+    if not issubclass(enum_class, Enum):
+        raise TypeError(f"{enum_class!r} is not an enum class")
+    for name in ArrayLibrary.__registry__:
+        if name not in enum_class._value2member_map_:
+            member = object.__new__(enum_class)
+            member._name_ = name.upper()
+            member._value_ = name
+            enum_class._member_map_[member._name_] = member
+            enum_class._member_names_.append(member._name_)
+            enum_class._value2member_map_[name] = member
+
+
+def _holds_members_of(
+    members: MappingProxyType[str, Enum], enum_class: type[MemberT]
+) -> TypeGuard[MappingProxyType[str, MemberT]]:
+    return all(isinstance(member, enum_class) for member in members.values())
 
 
 class _RegisteredLibraryNames(EnumMeta):
     """Keeps the members equal to the registered library names.
 
     The standard library offers no way to add a member to an existing enum, so
-    a missing one is entered into the enum's own member tables here. The
-    overrides below keep ``EnumMeta``'s signatures and add only that step.
+    a missing one is entered into the enum's own member tables. The overrides
+    below keep ``EnumMeta``'s signatures and add only that step. A lookup by
+    value needs no override: ``Enum`` asks ``_missing_`` for a value it does
+    not know, and ``MemoryType._missing_`` adds the missing members.
     """
 
-    def _add_missing_members(cls):
-        for name in ArrayLibrary.__registry__:
-            if name not in cls._value2member_map_:
-                member = object.__new__(cls)
-                member._name_ = name.upper()
-                member._value_ = name
-                cls._member_map_[member._name_] = member
-                cls._member_names_.append(member._name_)
-                cls._value2member_map_[name] = member
+    def __getitem__(cls: type[MemberT], name: str) -> MemberT:
+        _add_missing_members(cls)
+        return EnumMeta.__getitem__(cls, name)
 
-    def __call__(cls, *args, **kwargs):
-        cls._add_missing_members()
-        return super().__call__(*args, **kwargs)
+    def __reversed__(cls: type[MemberT]) -> Iterator[MemberT]:
+        _add_missing_members(cls)
+        return EnumMeta.__reversed__(cls)
 
-    def __getitem__(cls, name):
-        cls._add_missing_members()
-        return super().__getitem__(name)
-
-    def __reversed__(cls):
-        cls._add_missing_members()
-        return super().__reversed__()
-
-    def __dir__(cls):
-        cls._add_missing_members()
+    def __dir__(cls) -> list[str]:
+        _add_missing_members(cls)
         return super().__dir__()
 
-    def __iter__(cls):
-        cls._add_missing_members()
-        return super().__iter__()
+    def __iter__(cls: type[MemberT]) -> Iterator[MemberT]:
+        _add_missing_members(cls)
+        return EnumMeta.__iter__(cls)
 
-    def __len__(cls):
-        cls._add_missing_members()
+    def __len__(cls) -> int:
+        _add_missing_members(cls)
         return super().__len__()
 
-    def __contains__(cls, value):
-        cls._add_missing_members()
-        return super().__contains__(value)
+    # ``EnumMeta.__contains__`` takes any value from Python 3.12 and only a member before.
+    if sys.version_info >= (3, 12):
+
+        def __contains__(cls, value: object) -> bool:
+            _add_missing_members(cls)
+            return super().__contains__(value)
+
+    else:
+
+        def __contains__(cls, member: Enum) -> bool:
+            _add_missing_members(cls)
+            return super().__contains__(member)
 
     @property
-    def __members__(cls):
-        cls._add_missing_members()
-        return MappingProxyType(cls._member_map_)
+    def __members__(cls: type[MemberT]) -> MappingProxyType[str, MemberT]:
+        _add_missing_members(cls)
+        if not issubclass(cls, Enum):
+            raise TypeError(f"{cls!r} is not an enum class")
+        members = MappingProxyType(cls._member_map_)
+        if not _holds_members_of(members, cls):
+            raise TypeError(f"{cls!r} holds a member of another class")
+        return members
 
-    def __getattr__(cls, name):
+    def __getattr__(cls: type[MemberT], name: str) -> MemberT:
         if not name.startswith("_"):
-            cls._add_missing_members()
-            member = cls._member_map_.get(name)
-            if member is not None:
-                return member
+            _add_missing_members(cls)
+            try:
+                return EnumMeta.__getitem__(cls, name)
+            except KeyError:
+                pass
         raise AttributeError(name)
 
 
@@ -84,7 +112,7 @@ class MemoryType(Enum, metaclass=_RegisteredLibraryNames):
 
     @classmethod
     def _missing_(cls, value: object) -> MemoryType | None:
-        cls._add_missing_members()
+        _add_missing_members(cls)
         member = cls._value2member_map_.get(value)
         return member if isinstance(member, cls) else None
 
@@ -95,7 +123,7 @@ class MemoryType(Enum, metaclass=_RegisteredLibraryNames):
         return ArrayLibrary.named(self.value)
 
 
-MemoryType._add_missing_members()
+_add_missing_members(MemoryType)
 
 
 class MemoryContractAttribute(str, Enum):
@@ -108,9 +136,14 @@ class MemoryContractAttribute(str, Enum):
     def read(self, namespace: object, default: str | None = None) -> str | None:
         """Read this attribute from an object or a mapping."""
 
-        if isinstance(namespace, Mapping):
-            return namespace.get(self.value, default)
-        return getattr(namespace, self.value, default)
+        value: object = (
+            namespace.get(self.value, default)
+            if isinstance(namespace, Mapping)
+            else getattr(namespace, self.value, default)
+        )
+        if value is None or isinstance(value, str):
+            return value
+        raise TypeError(f"{self.value} of {namespace!r} is {value!r}, not a library name")
 
     def write(self, namespace: object, value: str) -> None:
         """Write this attribute to an object or a mutable mapping."""

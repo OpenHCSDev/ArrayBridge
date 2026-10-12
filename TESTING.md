@@ -9,7 +9,7 @@ are the authority for the current CI matrix.
 python -m pip install -e ".[dev,docs]"
 ruff check src tests
 black --check src tests
-mypy src --ignore-missing-imports
+mypy src stubs
 pytest
 python -m sphinx -E -W --keep-going -b html docs/source /tmp/arraybridge-docs
 ```
@@ -36,6 +36,41 @@ Use a fresh process and unset TensorFlow/JAX allocator variables when checking
 that declaration-owned import defaults work. Framework warnings about shared
 CUDA plugin registration should be recorded separately from value, device, or
 shape failures.
+
+## Commands for a GPU machine
+
+0.5.0's GPU run predates three later fixes, and 0.5.1 was not run on a GPU.
+On a machine with CUDA 12 and about 15 GB of free disk:
+
+```bash
+git clone https://github.com/OpenHCSDev/ArrayBridge.git && cd ArrayBridge
+git checkout v0.5.1
+uv venv -p 3.12 .venv-gpu
+uv pip install -p .venv-gpu/bin/python -e ".[dev,gpu]"
+.venv-gpu/bin/python -m pytest -q --no-cov -ra
+.venv-gpu/bin/python -m pytest -q --no-cov -ra -m "gpu or cupy or torch or tensorflow or jax or pyclesperanto"
+.venv-gpu/bin/python -m pytest -q --no-cov -ra tests/test_operation_soundness.py
+.venv-gpu/bin/python host_call_check.py
+```
+
+`tests/test_operation_soundness.py` calls every array operation of every
+installed library on its first device; no skip should name an installed
+library. `host_call_check.py` is:
+
+```python
+import torch
+from arraybridge import torch as on_torch
+
+@on_torch
+def add_one(image):
+    return image + 1
+
+add_one(torch.ones(2, 3, 3))
+assert not torch.cuda.is_initialized(), "a host call initialised CUDA"
+if torch.cuda.is_available():
+    assert add_one(torch.ones(2, 3, 3, device="cuda:0")).is_cuda
+print("ok")
+```
 
 ## Interpreting CI
 

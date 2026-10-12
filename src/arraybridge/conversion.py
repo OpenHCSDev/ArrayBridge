@@ -14,19 +14,33 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, ClassVar, TypeVar
+from types import NotImplementedType
+from typing import TYPE_CHECKING, ClassVar, TypeGuard, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
 
 from arraybridge.devices import Device
 
 if TYPE_CHECKING:
-    from arraybridge.libraries import ArrayLibrary
+    from arraybridge.libraries import ArrayLibrary, DLPackImport
 
 logger = logging.getLogger(__name__)
 
 S = TypeVar("S")
 T = TypeVar("T")
+
+
+def _is_array_of_both(data: S, source: ArrayLibrary[S], target: ArrayLibrary[T]) -> TypeGuard[T]:
+    """Whether ``data`` of ``source`` is an array of ``target`` too: they are one library."""
+
+    del data
+    return source is target
+
+
+def _imports_dlpack(library: ArrayLibrary[T]) -> TypeGuard[DLPackImport[T]]:
+    from arraybridge.libraries import DLPackImport
+
+    return isinstance(library, DLPackImport)
 
 
 class RouteDeclinedError(Exception):
@@ -134,11 +148,25 @@ class DeviceMove(ConversionRoute):
     mechanism = "device move"
 
     @classmethod
-    def applies(cls, source, source_device, target, target_device) -> bool:
+    def applies(
+        cls,
+        source: ArrayLibrary[S],
+        source_device: Device,
+        target: ArrayLibrary[T],
+        target_device: Device,
+    ) -> bool:
         return source is target
 
     @classmethod
-    def convert(cls, data, source, target, target_device):
+    def convert(
+        cls,
+        data: S,
+        source: ArrayLibrary[S],
+        target: ArrayLibrary[T],
+        target_device: Device,
+    ) -> T:
+        if not _is_array_of_both(data, source, target):
+            raise TypeError(f"{source} and {target} are different libraries")
         return target.move_to_device(data, target_device)
 
 
@@ -148,20 +176,34 @@ class DLPackExchange(ConversionRoute):
     mechanism = "dlpack"
 
     @classmethod
-    def applies(cls, source, source_device, target, target_device) -> bool:
+    def applies(
+        cls,
+        source: ArrayLibrary[S],
+        source_device: Device,
+        target: ArrayLibrary[T],
+        target_device: Device,
+    ) -> bool:
         return target.imports_dlpack_from(source_device) and source.exports_dlpack_from(
             source_device
         )
 
     @classmethod
-    def convert(cls, data, source, target, target_device):
+    def convert(
+        cls,
+        data: S,
+        source: ArrayLibrary[S],
+        target: ArrayLibrary[T],
+        target_device: Device,
+    ) -> T:
         try:
+            if not _imports_dlpack(target):
+                raise TypeError(f"{target} does not import DLPack")
             payload = source.export_dlpack(data)
             if payload is None:
                 raise RouteDeclinedError("the source array has no DLPack export")
             with target.device_scope(target_device):
                 result = target.from_dlpack(payload)
-            if result is NotImplemented:
+            if isinstance(result, NotImplementedType):
                 raise RouteDeclinedError("the target cannot import this capsule")
             return target.move_to_device(result, target_device)
         except RouteDeclinedError:
@@ -182,11 +224,23 @@ class HostCopy(ConversionRoute):
     mechanism = "host copy"
 
     @classmethod
-    def applies(cls, source, source_device, target, target_device) -> bool:
+    def applies(
+        cls,
+        source: ArrayLibrary[S],
+        source_device: Device,
+        target: ArrayLibrary[T],
+        target_device: Device,
+    ) -> bool:
         return True
 
     @classmethod
-    def convert(cls, data, source, target, target_device):
+    def convert(
+        cls,
+        data: S,
+        source: ArrayLibrary[S],
+        target: ArrayLibrary[T],
+        target_device: Device,
+    ) -> T:
         return target.unrecorded_from_numpy(source.unrecorded_to_numpy(data), target_device)
 
 

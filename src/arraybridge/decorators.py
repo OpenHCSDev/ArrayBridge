@@ -17,7 +17,7 @@ import functools
 import inspect
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar, ParamSpec, TypeVar
@@ -168,6 +168,8 @@ class DtypeConversionRunner(
     """Registered dtype conversion behavior selected by DtypeConversion."""
 
     __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
+    # Installed by the metaclass: each runner class under its conversion's value.
+    __registry__: ClassVar["Mapping[str, type[DtypeConversionRunner]]"]
 
     dtype_conversion: ClassVar[DtypeConversion | None] = None
 

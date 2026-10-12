@@ -1,5 +1,89 @@
 # Changelog
 
+## 0.5.1
+
+### No library inherits an operation it cannot perform
+
+`ArrayLibrary` no longer supplies NumPy-style implementations. In 0.5.0 every
+library inherited `self.array_module.linspace(...)`, `.ones`, `.outer`,
+`.floor`, `.max(axis=...)`, `data.astype(...)` and so on, whether or not its
+module had those functions. They now live in parents a library declares:
+
+| Parent | Supplies | Inherited by |
+|---|---|---|
+| `NumpyArrayApi` | every array operation, by NumPy's names on `array_module` | NumPy, CuPy, JAX |
+| `ArrayMath` | declares `linspace`, `ones`, `outer`, `floor` (abstract) | `NumpyArrayApi`, torch, TensorFlow |
+| `InPlaceAssignment` | `assign` by `array[index] = values` | `MutableArrays` (NumPy, CuPy), torch, pyclesperanto |
+
+`MutableArrays` is now a `NumpyArrayApi` and `InPlaceAssignment` library.
+`accepts`, `max`, `min`, `mean`, `sum`, `assign`, `_stack`, `_cast`,
+`_reshape`, `_broadcast_to`, `_ones_like` and `_logical_and` are abstract in
+`ArrayLibrary`. Torch and TensorFlow state the few they used to inherit; JAX
+drops four overrides that only repeated the NumPy spelling.
+
+What changes for callers: `PyclesperantoLibrary` has no `linspace`, `ones`,
+`outer` or `floor`. In 0.5.0 `ArrayLibrary.named("pyclesperanto").linspace(...)`
+existed and failed inside the call; it is now an `AttributeError` at the
+attribute. Ask `isinstance(library, ArrayMath)`. Nothing else is renamed or
+removed, and every other built-in library answers every operation as before.
+
+What changes for a library class written outside the package: it defines the
+operations above or inherits `NumpyArrayApi` (`ADDING_NEW_FRAMEWORKS.md` shows
+both).
+
+### A decorated call in main memory does not touch the accelerator
+
+The wrapper a library decorator puts around a function (`execution_wrapper`)
+reads the device from the call's arguments. In 0.5.0 it asked the library for
+its selected device whenever the machine had an accelerator, which for torch
+calls `torch.cuda.current_device()`: CUDA was initialised and a stream opened
+for a function working on host tensors.
+
+- Arguments held on accelerator N: the call runs on this thread's stream for
+  device N, with out-of-memory recovery for that device. (0.5.0 used the
+  stream of the selected device even when the data was on another one.)
+- Arguments in main memory, or no array of a library that has main memory
+  (torch, TensorFlow, JAX): the function is called as written. Nothing of the
+  accelerator is asked, and there is no out-of-memory retry.
+- A library without main memory (CuPy, pyclesperanto) called without one of
+  its arrays runs on its selected device, as before.
+
+### Typing
+
+`mypy` runs with `warn_return_any` and without `ignore_missing_imports`. Every
+library the package imports is declared in the repository's `stubs/`
+directory, which lists what arraybridge calls and comes before any installed
+copy, so the result is the same on every machine. A library class states that
+its `module` is that library; `NumpyArrayApi` names its module by the
+`NumpyFunctions` Protocol. For a class written outside the package this means:
+`NumpyArrayApi` and `MutableArrays` leave `array_module` abstract,
+`AcceleratorDevices` asks for `_device_if_accepted(value)`, `CudaLibrary` for
+`create_stream()`, and a `DLPackImport` library that cannot read a payload says
+so in `_reads_dlpack(payload)` instead of returning `NotImplemented` from
+`_import_dlpack`.
+
+Annotations that now say what was already returned: a device or stream scope
+is an `AbstractContextManager[object]` (CuPy's device and stream are their own
+context managers), `from_dlpack` returns the array or `NotImplementedType`,
+and `ArrayLibrary.array_module` is an `object` in the base class.
+
+A value of the wrong kind is now refused with `TypeError` in four places:
+`MemoryContractAttribute.read` when the stored value is neither a string nor
+`None`, `TorchLibrary.stream_scope` for an object that is neither a
+`torch.cuda.Stream` nor `None`, a dtype lookup in torch or TensorFlow whose
+attribute is not a dtype of that library, and `DeviceMove.convert` called with
+two different libraries.
+
+`MemoryType`'s metaclass overrides are annotated with `EnumMeta`'s signatures;
+its `__call__` override is gone (`Enum` already asks `_missing_`).
+
+### Not verified on a GPU
+
+0.5.1 was tested with NumPy on Python 3.10, 3.12 and 3.13 and with the torch
+CPU wheel on 3.12. CuPy, TensorFlow, JAX and pyclesperanto, and torch on CUDA,
+were exercised only through the fakes in `tests/fakes.py`. `TESTING.md` has
+the commands for a GPU machine.
+
 ## 0.5.0
 
 Each supported array library is now one class of one family,
@@ -120,3 +204,4 @@ cannot wrap one; the result (a host copy) is unchanged and the warning is gone.
 nominal type of an array of any supported library; `library.array_class` is an
 array of that library. Native array classes are registered with them when a
 library first meets one.
+

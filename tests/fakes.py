@@ -104,6 +104,8 @@ class FakeCupyArray(_FakeArray):
 
 
 class FakeCupy:
+    ndarray = FakeCupyArray
+
     def __init__(self, device_count=2):
         self.events = []
         self.current = 0
@@ -162,7 +164,17 @@ class FakeTorchTensor(_FakeArray):
 class FakeTorch:
     """torch with main memory and ``device_count`` CUDA devices (none by default)."""
 
+    Tensor = FakeTorchTensor
+
     def __init__(self, device_count=0):
+        module = self
+
+        class Stream(FakeStream):
+            """``torch.cuda.Stream`` is a class: a stream is recognised by being one."""
+
+            def __init__(self):
+                super().__init__(module)
+
         self.events = []
         self.current = 0
         self.cuda = SimpleNamespace(
@@ -171,7 +183,7 @@ class FakeTorch:
             current_device=lambda: self.current,
             set_device=lambda index: self.events.append(("set_device", index)),
             device=lambda index: DeviceScope(self, index),
-            Stream=lambda: FakeStream(self),
+            Stream=Stream,
             stream=lambda stream: stream,
             empty_cache=lambda: self.events.append(("empty_cache", self.current)),
             synchronize=lambda: self.events.append(("synchronize", self.current)),

@@ -71,9 +71,45 @@ class FrozenLibrary(HostDevices[FrozenArray]):
     def _move_to_host(self, data):
         return data
 
-    # The inherited default calls ``self.module.stack``; this module has none.
+    # Array operations: nothing is inherited for them, because the
+    # base class assumes no array API. This array wraps NumPy values.
+    def accepts(self, value):
+        return isinstance(value, FrozenArray)
+    
+    def max(self, data, axis):
+        return FrozenArray(data.values.max(axis=axis))
+    
+    def min(self, data, axis):
+        return FrozenArray(data.values.min(axis=axis))
+    
+    def mean(self, data, axis):
+        return FrozenArray(data.values.mean(axis=axis))
+    
+    def sum(self, data, axis):
+        return FrozenArray(data.values.sum(axis=axis))
+    
+    def assign(self, data, index, values):
+        updated = data.values.copy()
+        updated[index] = values.values
+        return FrozenArray(updated)
+    
     def _stack(self, values):
         return FrozenArray(np.stack([value.values for value in values]))
+    
+    def _cast(self, data, dtype):
+        return FrozenArray(data.values.astype(dtype))
+    
+    def _logical_and(self, left, right):
+        return FrozenArray(np.logical_and(left.values, right.values))
+    
+    def _reshape(self, data, shape):
+        return FrozenArray(data.values.reshape(shape))
+    
+    def _broadcast_to(self, data, shape):
+        return FrozenArray(np.broadcast_to(data.values, shape))
+    
+    def _ones_like(self, reference, shape, dtype):
+        return FrozenArray(np.ones(shape, dtype=dtype))
 
 
 # Lookup, by name and by array.
@@ -124,7 +160,8 @@ assert first_row(frozen).shape == (3,)
 | `oom_messages` | Lower-case text that marks an out-of-memory error message. | `()` |
 | `oom_exception_paths` | Attribute paths from the module to its out-of-memory exception classes. | `()` |
 
-Every library defines three methods asked for by `ArrayLibrary` itself:
+Every library defines three methods asked for by `ArrayLibrary` itself, and
+the array operations listed under "Array operations" below:
 
 - `device_of(data)`: the device holding the array. It never returns `None`.
 - `_to_host(data)`: the array as a NumPy array.
@@ -139,12 +176,11 @@ class must define.
 | Parent | The library... | Abstract methods |
 |---|---|---|
 | `HostDevices` | keeps arrays in main memory. | `_wrap_host_array(data)`, `_move_to_host(data)` |
-| `AcceleratorDevices` | can keep arrays on numbered accelerators. | `_accelerator_count()`, `_accelerator_scope(device)`, `_move_to_accelerator(data, device)`, `_upload(data, device)` |
-| `CudaLibrary` | is an `AcceleratorDevices` library with its own CUDA streams and a memory cache to release. | those of `AcceleratorDevices`, plus `stream_scope(stream)`, `current_device()`, `_free_cached_memory()` |
+| `AcceleratorDevices` | can keep arrays on numbered accelerators. | `_accelerator_count()`, `_accelerator_scope(device)`, `_move_to_accelerator(data, device)`, `_upload(data, device)`, `_device_if_accepted(value)` |
+| `CudaLibrary` | is an `AcceleratorDevices` library with its own CUDA streams and a memory cache to release. | those of `AcceleratorDevices`, plus `create_stream()`, `stream_scope(stream)`, `current_device()`, `_free_cached_memory()` |
 | `DLPackImport` | can wrap another library's buffer through DLPack. | `_import_dlpack(payload)` |
 | `DLPackProtocolExport` | has arrays with the standard DLPack export methods on every device. | none |
 | `NvidiaWheelLibraries` | loads CUDA from the `nvidia-*` wheels; child processes get their library directories on the search path. | none |
-| `MutableArrays` | has the NumPy array API and arrays that can be changed in place; supplies `_scale_dtype` and in-place plane normalisation. | `_rescales_into(target_dtype)` |
 
 Methods with a default worth knowing:
 
@@ -154,17 +190,62 @@ Methods with a default worth knowing:
   whole process. The default does nothing.
 - `cleanup_loaded(device=None)`: release cached device memory. `CudaLibrary`
   implements it; elsewhere the default does nothing.
+- `DLPackImport._reads_dlpack(payload)`: whether the importer can read this
+  payload. The default says yes; where it says no, `from_dlpack` returns
+  `NotImplemented` and `_import_dlpack` is not called.
 - `exports_dlpack_from`, `exports_dlpack_data`, `export_dlpack`: override
   these directly when export depends on the device or the array, as
   TensorFlow does.
-- `_stack`, `_cast`, `_reshape`, `_broadcast_to`, `_ones_like`,
-  `_logical_and`, `max`, `min`, `mean`, `sum`, `linspace`, `ones`, `assign`,
-  `outer`, `floor`, `accepts`, `nbytes_of`, `dtype_name`: the defaults call
-  NumPy-named functions on the library's module or methods on the array.
-  Override each one whose call or numeric rule differs.
+- `nbytes_of`, `dtype_name`: the defaults read `shape` and `dtype` from the
+  array and name the dtype as NumPy does. Override where the library differs.
+
+## Array operations
+
+`ArrayLibrary` asks every library for `accepts`, `max`, `min`, `mean`, `sum`,
+`assign`, `_stack`, `_cast`, `_reshape`, `_broadcast_to`, `_ones_like` and
+`_logical_and`, and gives no default for any of them: the base class assumes
+no array API. A library defines them or inherits them from a parent it
+declares.
+
+| Parent | The library... | Supplies | Abstract methods |
+|---|---|---|---|
+| `InPlaceAssignment` | has arrays that take `array[index] = values`. | `assign` | none |
+| `ArrayMath` | can make arrays without a reference array, on its default device. A library that cannot (pyclesperanto) does not inherit it and has none of these four methods. | nothing | `linspace`, `ones`, `outer`, `floor` |
+| `NumpyArrayApi` | has an array module and arrays that follow the NumPy API (`array_module.max(data, axis=...)`, `data.astype(...)`, ...). It is an `ArrayMath` library. | every operation above except `assign`, and the four of `ArrayMath` | `array_module` |
+| `MutableArrays` | is a `NumpyArrayApi` and `InPlaceAssignment` library; supplies `_scale_dtype` and in-place plane normalisation. | all of the above | `array_module`, `_rescales_into(target_dtype)` |
+
+Override an inherited operation only where the library's numeric rule
+differs (JAX's `mean` casts to float32 first).
 
 The six built-in classes at the end of `src/arraybridge/libraries.py` are the
 reference for each combination of roles.
+
+## Typing
+
+The checker reads a library from `stubs/<library>/`, never from an installed
+copy, so `mypy` gives the same result on every machine. For a new library:
+
+- declare in `stubs/<library>/` exactly the functions, classes and attributes
+  the class calls, with the library's own names and types;
+- state the module in the class, so its calls are checked against that
+  declaration:
+
+  ```python
+  if TYPE_CHECKING:
+      import mylib
+
+  class MylibLibrary(HostDevices["mylib.Array"]):
+      name = "mylib"
+
+      if TYPE_CHECKING:
+          module = mylib
+  ```
+
+- call `self.module.<function>(...)` directly: a local `module = self.module`
+  is a plain `ModuleType` to the checker and loses the declaration;
+- a `NumpyArrayApi` library returns its module of NumPy-named functions from
+  `array_module`; the checker compares that module with the `NumpyFunctions`
+  Protocol (`MutableNumpyFunctions` for `MutableArrays`).
 
 ## Tests to add
 
@@ -181,7 +262,7 @@ Run:
 ```bash
 ruff check src tests
 black --check src tests
-mypy src --ignore-missing-imports
+mypy src stubs
 pytest
 python -m sphinx -E -W --keep-going -b html docs/source /tmp/arraybridge-docs
 ```
