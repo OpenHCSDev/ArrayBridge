@@ -41,6 +41,18 @@ class _RegisteredLibraryNames(EnumMeta):
         cls._add_missing_members()
         return super().__call__(*args, **kwargs)
 
+    def __getitem__(cls, name):
+        cls._add_missing_members()
+        return super().__getitem__(name)
+
+    def __reversed__(cls):
+        cls._add_missing_members()
+        return super().__reversed__()
+
+    def __dir__(cls):
+        cls._add_missing_members()
+        return super().__dir__()
+
     def __iter__(cls):
         cls._add_missing_members()
         return super().__iter__()

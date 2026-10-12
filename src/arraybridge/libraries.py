@@ -244,6 +244,8 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
     def is_installed(self) -> bool:
         """Whether the package is present, without importing it."""
 
+        if self.loaded_module() is not None:
+            return True
         try:
             return importlib.util.find_spec(self.import_name) is not None
         except (ImportError, ModuleNotFoundError, ValueError):
@@ -1092,8 +1094,8 @@ class CupyLibrary(
     def _import_dlpack(self, payload: DLPackPayload) -> cupy.ndarray:
         if _has_dlpack_protocol(payload.source):
             return self.module.from_dlpack(payload.source)
-        legacy_importer = getattr(self.module, "fromDlpack", None)
-        return NotImplemented if legacy_importer is None else legacy_importer(payload.capsule)
+        capsule_importer = getattr(self.module, "fromDlpack", None)
+        return NotImplemented if capsule_importer is None else capsule_importer(payload.capsule)
 
     def _to_host(self, data: cupy.ndarray) -> np.ndarray:
         return data.get()

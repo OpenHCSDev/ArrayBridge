@@ -105,7 +105,7 @@ jobs:
           # 1. Framework unavailable tests (always run)
           # 2. GPU unavailable fallback paths (will run in CI)
           # 3. Mocked GPU tests (test cleanup code with mocked GPU state)
-          pytest -v tests/test_gpu_cleanup.py \
+          pytest -v tests/test_libraries.py \
             --cov=arraybridge \
             --cov-report=term-missing \
             --cov-report=html \

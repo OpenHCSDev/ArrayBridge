@@ -24,7 +24,7 @@ exclude framework-specific tests.
 On a GPU host, validate more than a single NumPy round trip:
 
 - import all installed frameworks in one fresh process;
-- enumerate framework-local devices through each `MemoryType`;
+- enumerate each library's devices through `ArrayLibrary.all()` (`available_devices()`);
 - convert a small exact array through every available source-target pair;
 - stack and unstack one, two, and several planes in every framework;
 - verify same-framework movement across multiple local devices when present;

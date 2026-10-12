@@ -1,55 +1,180 @@
-# Adding a framework
+# Adding a library
 
-This is a maintainer how-to for extending ArrayBridge's closed framework
-taxonomy. Applications should consume `MemoryType`; they should not add their
-own framework registry.
+A library is one class: a subclass of `arraybridge.libraries.ArrayLibrary`
+that inherits the role parents it plays, states `name = "..."`, and defines
+the abstract methods those parents ask for. Nothing else is edited. The class
+can live in `src/arraybridge/libraries.py` or in any other module; it
+registers when its module is imported.
 
-## 1. Define typed leaves
+## What follows from the class
 
-Add an `ArrayOperations` leaf in `src/arraybridge/array_operations.py`: a
-subclass declaring `memory_type = "<value>"`. It registers itself, and
-`ArrayOperations.for_memory(MemoryType.<MEMBER>)` returns it. It must provide:
+- Lookup: `ArrayLibrary.named(name)`, `ArrayLibrary.of(array)`,
+  `ArrayLibrary.for_module_name(module_name)`, `ArrayLibrary.all()`.
+- A `MemoryType` member: `MemoryType.<NAME>` with value `name` and
+  `.library` returning the library object.
+- The decorator `arraybridge.<name>`.
+- Conversion to and from every other library through `convert_memory`,
+  `stack_slices` and `unstack_slices`. `ConversionRoute.planned` picks the
+  route from the role parents: same library is a device move, a DLPack
+  importer paired with a DLPack exporter is a DLPack exchange, anything else
+  is a copy through NumPy.
+- Device answers (`host_devices`, `accelerator_devices`, `available_devices`,
+  `require_device`) and the array operations (`max`, `reshape`,
+  `stack_arrays`, ...) with NumPy-style defaults that call the library's
+  module.
 
-- project an array to NumPy;
-- create an array from NumPy on the requested framework-local device;
-- stack prepared 2D arrays into one 3D array;
-- apply the framework's dtype-scaling semantics;
-- an override of each namespace primitive (`max`, `mean`, `assign`,
-  `linspace`, ...) whose library call or numeric rule differs from the
-  NumPy-compatible default.
+## A host-only example
 
-Define device, stream, DLPack, cleanup, and OOM leaves in
-`src/arraybridge/types.py`. Use the no-op defaults in `FrameworkRuntime` only
-when the framework genuinely lacks that capability. Do not encode behavior as
-strings or add a parallel `MemoryType`-keyed table.
+This file runs as it is with only NumPy installed.
 
-## 2. Add the declaration
+```python
+import numpy as np
 
-Add one `MemoryType` member carrying:
+from arraybridge import HOST, ConversionRoute, MemoryType
+from arraybridge import convert_memory, detect_memory_type, stack_slices
+from arraybridge.libraries import ArrayLibrary, HostDevices
 
-1. its stable value and import name;
-2. its display name and module aliases;
-3. whether it is GPU-backed;
-4. any environment defaults that must be set before first import;
-5. its `FrameworkRuntime` leaves.
 
-The converter classes, target conversion methods, compatibility operation view,
-dtype-scaling view, cleanup adapters, and framework decorator are generated
-from the enum. Do not wire them manually.
+class FrozenArray:
+    """Values in main memory that cannot be changed after creation."""
 
-## 3. Prove the extension
+    def __init__(self, values):
+        self.values = np.array(values)
+        self.values.flags.writeable = False
+        self.shape = self.values.shape
+        self.dtype = self.values.dtype
 
-Add focused tests for:
+    def __getitem__(self, index):
+        return FrozenArray(self.values[index])
 
-- module-name detection and optional-dependency failure;
-- NumPy round trips and every supported DLPack pair;
-- CPU-only installations of a nominally GPU framework;
-- invalid, negative, and multiple framework-local device IDs;
-- same-framework moves between two devices;
-- one-, two-, and multi-slice stack/unstack behavior;
-- immutable array types;
-- cleanup and OOM behavior without importing an absent framework;
-- generated registry and export completeness.
+
+class FrozenLibrary(HostDevices[FrozenArray]):
+    name = "frozen"
+    # The module whose classes are this library's arrays. It defaults to
+    # ``name``; here the array class lives in this file.
+    import_name = __name__
+
+    # asked for by ArrayLibrary
+    def device_of(self, data):
+        return HOST
+
+    def _to_host(self, data):
+        return np.array(data.values)
+
+    def _scale_dtype(self, result, target_dtype):
+        return FrozenArray(result.values.astype(target_dtype))
+
+    # asked for by HostDevices
+    def _wrap_host_array(self, data):
+        return FrozenArray(data)
+
+    def _move_to_host(self, data):
+        return data
+
+    # The inherited default calls ``self.module.stack``; this module has none.
+    def _stack(self, values):
+        return FrozenArray(np.stack([value.values for value in values]))
+
+
+# Lookup, by name and by array.
+library = ArrayLibrary.named("frozen")
+assert library in ArrayLibrary.all()
+assert ArrayLibrary.of(FrozenArray([1, 2])) is library
+
+# The MemoryType member.
+assert MemoryType.FROZEN.value == "frozen"
+assert MemoryType.FROZEN.library is library
+
+# Devices.
+assert library.available_devices() == (HOST,)
+
+# Conversion in both directions, by host copy.
+numpy_library = ArrayLibrary.named("numpy")
+assert ConversionRoute.planned(numpy_library, HOST, library, HOST).mechanism == "host copy"
+frozen = convert_memory(np.arange(6).reshape(2, 3), "numpy", "frozen", HOST)
+assert detect_memory_type(frozen) == "frozen"
+assert convert_memory(frozen, "frozen", "numpy", HOST).tolist() == [[0, 1, 2], [3, 4, 5]]
+
+# Stacking.
+stack = stack_slices([frozen, np.ones((2, 3))], "frozen", HOST)
+assert stack.shape == (2, 2, 3)
+
+# The decorator named after the library.
+from arraybridge import frozen as frozen_function
+
+
+@frozen_function
+def first_row(image):
+    return image[0]
+
+
+assert first_row.execution_memory_type == "frozen"
+assert first_row(frozen).shape == (3,)
+```
+
+## What the class states
+
+| Attribute | Meaning | Default |
+|---|---|---|
+| `name` | The registered name, the `MemoryType` value and the decorator name. | required |
+| `import_name` | Top-level module to import; objects from it belong to the library. | `name` |
+| `display_name` | Name used in messages. | `name` |
+| `module_aliases` | Other top-level module names whose objects belong to the library (JAX: `jaxlib`). | `()` |
+| `import_environment` | Environment variables set, if unset, before the first import and in child processes. | `()` |
+| `oom_messages` | Lower-case text that marks an out-of-memory error message. | `()` |
+| `oom_exception_paths` | Attribute paths from the module to its out-of-memory exception classes. | `()` |
+
+Every library defines three methods asked for by `ArrayLibrary` itself:
+
+- `device_of(data)`: the device holding the array. It never returns `None`.
+- `_to_host(data)`: the array as a NumPy array.
+- `_scale_dtype(result, target_dtype)`: convert the dtype, rescaling float
+  intensities into the integer range where the library does that.
+
+## Role parents
+
+Inherit each role the library plays. The abstract methods are the ones the
+class must define.
+
+| Parent | The library... | Abstract methods |
+|---|---|---|
+| `HostDevices` | keeps arrays in main memory. | `_wrap_host_array(data)`, `_move_to_host(data)` |
+| `AcceleratorDevices` | can keep arrays on numbered accelerators. | `_accelerator_count()`, `_accelerator_scope(device)`, `_move_to_accelerator(data, device)`, `_upload(data, device)` |
+| `CudaLibrary` | is an `AcceleratorDevices` library with its own CUDA streams and a memory cache to release. | those of `AcceleratorDevices`, plus `stream_scope(stream)`, `current_device()`, `_free_cached_memory()` |
+| `DLPackImport` | can wrap another library's buffer through DLPack. | `_import_dlpack(payload)` |
+| `DLPackProtocolExport` | has arrays with the standard DLPack export methods on every device. | none |
+| `NvidiaWheelLibraries` | loads CUDA from the `nvidia-*` wheels; child processes get their library directories on the search path. | none |
+| `MutableArrays` | has the NumPy array API and arrays that can be changed in place; supplies `_scale_dtype` and in-place plane normalisation. | `_rescales_into(target_dtype)` |
+
+Methods with a default worth knowing:
+
+- `HostDevices._host_scope()`: the block in which new arrays are created in
+  main memory. The default does nothing; TensorFlow and JAX override it.
+- `AcceleratorDevices._activate_accelerator(device)`: select a device for the
+  whole process. The default does nothing.
+- `cleanup_loaded(device=None)`: release cached device memory. `CudaLibrary`
+  implements it; elsewhere the default does nothing.
+- `exports_dlpack_from`, `exports_dlpack_data`, `export_dlpack`: override
+  these directly when export depends on the device or the array, as
+  TensorFlow does.
+- `_stack`, `_cast`, `_reshape`, `_broadcast_to`, `_ones_like`,
+  `_logical_and`, `max`, `min`, `mean`, `sum`, `linspace`, `ones`, `assign`,
+  `outer`, `floor`, `accepts`, `nbytes_of`, `dtype_name`: the defaults call
+  NumPy-named functions on the library's module or methods on the array.
+  Override each one whose call or numeric rule differs.
+
+The six built-in classes at the end of `src/arraybridge/libraries.py` are the
+reference for each combination of roles.
+
+## Tests to add
+
+- detection by array and by module name, and behaviour when the package is
+  not installed;
+- NumPy round trips, and the planned route against every other library;
+- each device the library accepts, and `ValueError` for one it does not have;
+- moves between two devices of the library;
+- stacking and unstacking one, two and several planes;
+- cleanup and out-of-memory recognition without importing an absent library.
 
 Run:
 
@@ -61,6 +186,6 @@ pytest
 python -m sphinx -E -W --keep-going -b html docs/source /tmp/arraybridge-docs
 ```
 
-When GPU hardware is available, also exercise every installed framework pair in
-one process. This catches import-order, allocator-coexistence, DLPack, and real
-API-shape defects that isolated mocks cannot prove.
+When accelerator hardware is available, also convert between every installed
+pair of libraries in one process. Import order, allocators sharing a device
+and DLPack differences only show there.

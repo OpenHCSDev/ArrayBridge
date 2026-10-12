@@ -1,18 +1,23 @@
-Multi-framework boundary
-========================
+Converting between libraries
+============================
 
-Keep conversion visible at the point that owns the boundary:
+Convert at the place that knows the target library and device:
 
 .. code-block:: python
 
-   from arraybridge import convert_memory, detect_memory_type
+   import numpy as np
 
-   def as_framework(value, target, gpu_id):
-       source = detect_memory_type(value)
-       if source == target:
-           return value
-       return convert_memory(value, source, target, gpu_id)
+   from arraybridge import HOST, convert_memory, detect_memory_type
 
-For a sequence of framework-specific functions, a host compiler should read
-their declared input/output memory types and create one conversion plan. The
-functions themselves should not each guess the incoming framework.
+   def as_library(value, target, device):
+       return convert_memory(value, detect_memory_type(value), target, device)
+
+   value = np.arange(4)
+   assert as_library(value, "numpy", HOST) is value
+
+A conversion to the library and device the value is already on returns the
+same object, so no check is needed first.
+
+For a sequence of functions written for different libraries, read their
+declared input and output memory types and convert between steps. The
+functions should not each guess the library of what they receive.

@@ -73,25 +73,33 @@ Writing correct multi-framework code requires understanding all these difference
 
 # Software Design
 
-The architecture uses data-driven metaprogramming. All framework-specific behavior is declared in `_FRAMEWORK_CONFIG`:
+The architecture uses data-driven metaprogramming. All framework-specific behavior is declared in one `ArrayLibrary` subclass per framework (abridged):
 
 ```python
-_FRAMEWORK_CONFIG = {
-    MemoryType.CUPY: {
-        "conversion_ops": {
-            "to_numpy": "data.get()",
-            "from_numpy": "({mod}.cuda.Device(gpu_id), {mod}.array(data))[1]",
-            "from_dlpack": "{mod}.from_dlpack(data)",
-        },
-        "oom_exception_types": ["{mod}.cuda.memory.OutOfMemoryError"],
-        "oom_clear_cache": "{mod}.get_default_memory_pool().free_all_blocks()",
-        "stream_context": "{mod}.cuda.Stream()",
-    },
-    # Similar entries for TORCH, TENSORFLOW, JAX, PYCLESPERANTO, NUMPY
-}
+class CupyLibrary(CudaLibrary, DLPackImport, DLPackProtocolExport,
+                  NvidiaWheelLibraries, MutableArrays):
+    name = "cupy"
+    oom_exception_paths = (
+        ("cuda", "memory", "OutOfMemoryError"),
+        ("cuda", "runtime", "CUDARuntimeError"),
+    )
+
+    def _to_host(self, data):
+        return data.get()
+
+    def _upload(self, data, device):
+        return self.module.array(data)
+
+    def _import_dlpack(self, payload):
+        return self.module.from_dlpack(payload.source)
+
+    def _free_cached_memory(self):
+        self.module.get_default_memory_pool().free_all_blocks()
+
+# Similar classes for TORCH, TENSORFLOW, JAX, PYCLESPERANTO, NUMPY
 ```
 
-At import time, converter classes are generated dynamically via `AutoRegisterMeta` from the `metaclass-registry` library [@metaclassregistry]. Each converter implements `to_numpy()`, `from_numpy()`, `from_dlpack()`, and `to_X()` methods for all target frameworks. Adding a seventh framework requires only adding its entry to `_FRAMEWORK_CONFIG`—no new code paths.
+At import time, the library classes are registered via `AutoRegisterMeta` from the `metaclass-registry` library [@metaclassregistry]. Each library implements `to_numpy()`, `from_numpy()`, `from_dlpack()`, and `convert_to()` for all target frameworks. Adding a seventh framework requires only adding its `ArrayLibrary` subclass—no new code paths.
 
 **Thread-local GPU streams** are managed via `threading.local()`. Without this, multiple threads sharing a GPU would serialize on the default stream or corrupt each other's operations. With per-thread streams, true parallel GPU execution is possible:
 
@@ -104,14 +112,17 @@ def segment_image(image):
 **OOM recovery** (enabled by default) unifies detection across frameworks. The library checks both exception types and error string patterns (e.g., "out of memory", "resource_exhausted"), clears framework-specific caches, and retries:
 
 ```python
-def _execute_with_oom_recovery(func, memory_type, max_retries=2):
-    for attempt in range(max_retries + 1):
+def run_with_oom_recovery(self, func, max_retries=2, device=None):
+    attempt = 0
+    while True:
         try:
             return func()
-        except Exception as e:
-            if not _is_oom_error(e, memory_type) or attempt == max_retries:
+        except Exception as error:
+            if not self.is_oom_error(error) or attempt == max_retries:
                 raise
-            _clear_cache_for_memory_type(memory_type)
+        attempt += 1
+        self.cleanup_loaded(device)
+        gc.collect()
 ```
 
 This is critical for microscopy pipelines where image sizes are unpredictable. A 4K image might fit in GPU memory, but a 16K image might not. With OOM recovery, the pipeline automatically falls back to CPU processing without user intervention.
@@ -125,7 +136,7 @@ This is critical for microscopy pipelines where image sizes are unpredictable. A
 result = gaussian_filter(image)  # Still uint16
 ```
 
-The `SCALING_FUNCTIONS` registry applies framework-specific scaling and clamping to convert back to the original dtype without overflow. This preserves the user's mental model—they think in terms of their original data type, not the intermediate float32 representation.
+Each library's `scale_dtype` method applies framework-specific scaling and clamping to convert back to the original dtype without overflow. This preserves the user's mental model—they think in terms of their original data type, not the intermediate float32 representation.
 
 # Research Impact Statement
 

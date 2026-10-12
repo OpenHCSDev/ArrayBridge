@@ -1,9 +1,11 @@
 arraybridge
 ===========
 
-ArrayBridge owns explicit array-framework conversion, memory-type declarations,
-stack utilities, dtype policy, GPU stream/OOM helpers, and cleanup for scientific
-applications.
+ArrayBridge converts arrays between NumPy, CuPy, PyTorch, TensorFlow, JAX and
+pyclesperanto. Each library is one class that answers for its devices, moves
+and converts its arrays, and runs array operations natively. The package also
+provides memory-type decorators, stack utilities, a dtype policy, per-thread
+CUDA streams, out-of-memory retries and cache cleanup.
 
 .. toctree::
    :maxdepth: 2
@@ -23,13 +25,12 @@ applications.
    release_035_validation
    release_036_validation
 
-Boundary rule
--------------
+What converts and what does not
+-------------------------------
 
-Conversion is explicit. ``convert_memory`` moves values between frameworks.
-Decorators declare callable input/output memory types and runtime policies; they
-do not perform cross-framework conversion on direct calls.
+``convert_memory`` moves values between libraries. Decorators declare a
+function's input and output memory types; calling a decorated function does
+not convert anything.
 
-ArrayBridge does not own a host application's compiler, function catalog, or
-resource scheduler. Hosts consume the declarations and plan conversions/devices
-at their own boundary.
+ArrayBridge does not plan pipelines or schedule devices. An application reads
+the declared types and decides where to convert and on which device.

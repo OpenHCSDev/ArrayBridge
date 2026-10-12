@@ -1,7 +1,7 @@
 Continuous integration
 ======================
 
-The repository workflows are authoritative. The main test matrix currently
+The workflow files in the repository define what CI runs. The main test matrix currently
 covers Python 3.10 through 3.13 on Linux, Windows, and macOS. Separate jobs
 exercise optional GPU paths and code quality.
 

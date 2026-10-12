@@ -8,7 +8,7 @@ Detection and conversion
 
    import numpy as np
 
-   from arraybridge import convert_memory, detect_memory_type
+   from arraybridge import HOST, convert_memory, detect_memory_type
 
    value = np.arange(6).reshape(2, 3)
    source = detect_memory_type(value)
@@ -16,12 +16,14 @@ Detection and conversion
        value,
        source_type=source,
        target_type="numpy",
-       gpu_id=0,
+       device=HOST,
    )
 
 ``detect_memory_type`` returns a string such as ``"numpy"`` or ``"torch"``.
-Unknown array classes fail loudly. ``convert_memory`` requires all four
-arguments; use a real GPU id when the target framework is GPU-backed.
+An array of an unknown class raises ``ValueError``. ``convert_memory``
+requires all four arguments. ``device`` is a device of the target library:
+``HOST`` for NumPy, ``AcceleratorDevice(i)`` for CuPy and pyclesperanto, either
+for PyTorch, JAX and TensorFlow.
 
 Callable declarations
 ---------------------
@@ -37,18 +39,20 @@ Callable declarations
    assert double.input_memory_type == "numpy"
    assert double.output_memory_type == "numpy"
 
-The decorator expects the caller to supply a compatible array. A host runtime
-may read the metadata and call ``convert_memory`` before invocation.
+The decorator expects the caller to pass an array of the declared library. An
+application may read the attributes and call ``convert_memory`` first.
 
 Stacks
 ------
 
 .. code-block:: python
 
-   from arraybridge import stack_slices, unstack_slices
+   import numpy as np
+
+   from arraybridge import HOST, stack_slices, unstack_slices
 
    slices = [np.zeros((4, 4)), np.ones((4, 4))]
-   volume = stack_slices(slices, memory_type="numpy", gpu_id=0)
-   restored = unstack_slices(volume, memory_type="numpy", gpu_id=0)
+   volume = stack_slices(slices, memory_type="numpy", device=HOST)
+   restored = unstack_slices(volume, memory_type="numpy", device=HOST)
 
 See :doc:`decorators`, :doc:`converters`, and :doc:`stack_utils`.

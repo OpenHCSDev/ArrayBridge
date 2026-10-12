@@ -1,24 +1,28 @@
-Advanced extension topics
-=========================
+Adding a library
+================
 
-Framework behavior is carried by each ``MemoryType`` member. Add a framework by
-extending that owning declaration:
+Each supported library is one class of the family
+``arraybridge.libraries.ArrayLibrary``. The class states the library's name
+and owns what that library does its own way: devices, moving data, streams,
+DLPack, out-of-memory recognition, child-process environment and array
+operations. What several libraries share is a role parent they inherit:
+``HostDevices``, ``AcceleratorDevices``, ``CudaLibrary``, ``DLPackImport``,
+``DLPackProtocolExport``, ``NvidiaWheelLibraries``, ``MutableArrays``.
 
-1. add the ``MemoryType`` member;
-2. provide its typed runtime and array-operation leaves;
-3. define conversion, stack, scaling, and device behavior;
-4. add cleanup and OOM behavior only when the framework supports them;
-5. exercise detection and every supported conversion pair.
+To add a library, write one subclass with ``name = "..."``, the role parents
+it plays and their abstract methods. Lookup, the ``MemoryType`` member, the
+decorator and the conversion routes follow from the class. The repository's
+`ADDING_NEW_FRAMEWORKS.md
+<https://github.com/OpenHCSDev/arraybridge/blob/main/ADDING_NEW_FRAMEWORKS.md>`_
+has a runnable example and the list of methods each role parent asks for.
 
-Do not add a parallel framework-name table in a consumer. Generic consumers use
-``MemoryType`` directly. The converter registry and historical framework config
-are generated projections, not authorities.
+Do not keep a second table of library names in a consumer. Iterate
+``MemoryType`` or ``ArrayLibrary.all()``.
 
-Version 0.3 keeps the private ``_FRAMEWORK_CONFIG`` and ``_FRAMEWORK_OPS`` names
-only as read-only operation views. Their historical mapping shape is not a
-compatibility contract. Migrate callers to ``MemoryType`` methods.
+Caching and batching
+--------------------
 
-Conversion caching and batching belong to the caller because value lifetime and
-semantic identity are application concerns. ArrayBridge functions remain
-stateless at the conversion boundary except for declared thread-local GPU
-context.
+ArrayBridge does not cache or batch conversions. How long a converted value
+stays valid is the caller's knowledge. The state ArrayBridge keeps is the
+per-thread CUDA stream of each CuPy and PyTorch device and the installed
+``ConversionObserver``.

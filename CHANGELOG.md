@@ -52,7 +52,8 @@ GPU", which is false for torch, JAX and TensorFlow. Ask instead:
 | Where is this array? | `library.device_of(array)` (never `None`) |
 
 Every `gpu_id` / `device_id` integer parameter is now a `Device`. A device the
-library does not have raises `ValueError`; in particular a NumPy target with an
+library does not have raises `ValueError` (`convert_memory` wraps it in
+`MemoryConversionError`, as it wraps every failure); in particular a NumPy target with an
 accelerator device raises (0.4.1 ignored the number), and torch, JAX and
 TensorFlow accept `HOST` (0.4.1 always moved torch data to CUDA).
 `process_slices` keeps a torch CPU tensor on the host (0.4.1 sent it to GPU 0).

@@ -1,27 +1,29 @@
 """Tests for arraybridge.decorators module."""
 
-from contextlib import nullcontext
+import sys
+import threading
 from dataclasses import dataclass
 from typing import Any
 
+import dill
 import numpy as np
 import pytest
 from python_introspect import RuntimeParameterDeclarationABC
 
-from arraybridge import ArrayPayload
+import arraybridge
+from arraybridge import ArrayPayload, decorators
 from arraybridge.decorators import (
     DtypeConversion,
     DtypeConversionConfig,
     PreserveInputDtypeConfig,
     SliceBySliceRuntimeParameter,
-    ThreadGPUContext,
     memory_types,
     wrap_dtype_preserving_callable,
 )
-from arraybridge.decorators import (
-    torch as torch_memory,
-)
+from arraybridge.devices import AcceleratorDevice
+from arraybridge.libraries import ArrayLibrary
 from arraybridge.types import MemoryType
+from tests.fakes import FakeCupy, FakeTorch
 
 
 class TestDtypeConversion:
@@ -57,130 +59,81 @@ class TestDtypeConversion:
         assert DtypeConversion.NATIVE_OUTPUT.numpy_dtype is None
 
 
-class TestThreadGPUContext:
-    def test_streams_are_cached_by_framework_local_device(self):
-        state = {"device": 0}
-        created = []
+class TestExecutionOnAccelerators:
+    """What a library's devices need around a decorated call."""
 
-        class DeviceScope:
-            def __init__(self, device_id):
-                self.device_id = device_id
-                self.previous = None
+    @pytest.mark.parametrize(
+        ("name", "fake"), [("torch", FakeTorch), ("cupy", FakeCupy)], ids=["torch", "cupy"]
+    )
+    def test_cuda_call_runs_on_this_threads_stream(self, name, fake, monkeypatch):
+        module = fake(device_count=1)
+        monkeypatch.setitem(sys.modules, name, module)
 
-            def __enter__(self):
-                self.previous = state["device"]
-                state["device"] = self.device_id
-
-            def __exit__(self, exc_type, exc_value, traceback):
-                state["device"] = self.previous
-                return False
-
-        class Stream:
-            def __init__(self):
-                self.device_id = state["device"]
-                created.append(self)
-
-        module = type(
-            "FakeCupy",
-            (),
-            {
-                "cuda": type(
-                    "Cuda",
-                    (),
-                    {
-                        "runtime": type(
-                            "Runtime",
-                            (),
-                            {
-                                "getDeviceCount": staticmethod(lambda: 2),
-                                "getDevice": staticmethod(lambda: state["device"]),
-                            },
-                        )(),
-                        "Device": staticmethod(DeviceScope),
-                        "Stream": Stream,
-                    },
-                )()
-            },
-        )()
-        context = ThreadGPUContext()
-
-        _, first = context.stream_for(MemoryType.CUPY, module)
-        _, repeated = context.stream_for(MemoryType.CUPY, module)
-        state["device"] = 1
-        _, second = context.stream_for(MemoryType.CUPY, module)
-        state["device"] = 0
-        _, first_again = context.stream_for(MemoryType.CUPY, module)
-
-        assert first is repeated is first_again
-        assert second is not first
-        assert [stream.device_id for stream in created] == [0, 1]
-
-    def test_framework_without_stream_leaf_does_not_invent_one(self):
-        module = type(
-            "FakeTensorFlow",
-            (),
-            {"config": type("Config", (), {"list_logical_devices": lambda self, _: []})()},
-        )()
-
-        assert ThreadGPUContext().stream_for(MemoryType.TENSORFLOW, module) == (
-            None,
-            None,
-        )
-
-    def test_torch_stream_execution_uses_framework_owned_scope(self, monkeypatch):
-        events = []
-
-        class Stream:
-            pass
-
-        class StreamScope:
-            def __init__(self, stream):
-                self.stream = stream
-
-            def __enter__(self):
-                events.append(("enter", self.stream))
-
-            def __exit__(self, exc_type, exc_value, traceback):
-                events.append(("exit", self.stream))
-                return False
-
-        stream = Stream()
-        module = type(
-            "FakeTorch",
-            (),
-            {
-                "cuda": type(
-                    "Cuda",
-                    (),
-                    {
-                        "is_available": staticmethod(lambda: True),
-                        "device_count": staticmethod(lambda: 1),
-                        "current_device": staticmethod(lambda: 0),
-                        "device": staticmethod(lambda _device_id: nullcontext()),
-                        "Stream": staticmethod(lambda: stream),
-                        "stream": staticmethod(StreamScope),
-                    },
-                )()
-            },
-        )()
-        monkeypatch.setattr(MemoryType, "import_if_installed", lambda self: module)
-
-        @torch_memory
+        @getattr(decorators, name)
         def identity(value):
-            events.append(("call", value))
+            module.events.append(("call", value))
             return value
 
         assert identity("payload") == "payload"
-        assert events == [
-            ("enter", stream),
+        assert identity("again") == "again"
+        stream = ArrayLibrary.named(name).thread_stream(AcceleratorDevice(0))
+        assert module.events == [
+            ("enter", 0),
+            ("exit", 0),
+            ("stream enter", stream),
             ("call", "payload"),
-            ("exit", stream),
+            ("stream exit", stream),
+            ("stream enter", stream),
+            ("call", "again"),
+            ("stream exit", stream),
         ]
 
-    def test_cross_framework_dtype_preservation_uses_portable_identity(
-        self,
-        monkeypatch,
+    def test_torch_without_cuda_calls_the_function_directly(self, monkeypatch):
+        module = FakeTorch()
+        monkeypatch.setitem(sys.modules, "torch", module)
+
+        @decorators.torch
+        def identity(value):
+            return value
+
+        assert identity("payload") == "payload"
+        assert module.events == []
+
+    @pytest.mark.parametrize("name", [library.name for library in ArrayLibrary.all()])
+    def test_library_that_is_not_installed_calls_the_function_directly(
+        self, name, absent_libraries
     ):
+        @getattr(decorators, name)
+        def add_one(values):
+            return values + 1
+
+        np.testing.assert_array_equal(add_one(np.array([1, 2])), [2, 3])
+        assert add_one.execution_memory_type == name
+
+    def test_out_of_memory_releases_the_cache_and_retries(self, monkeypatch):
+        module = FakeCupy(device_count=1)
+        monkeypatch.setitem(sys.modules, "cupy", module)
+        calls = []
+
+        def fails_once(value):
+            calls.append(value)
+            if len(calls) == 1:
+                raise MemoryError("out of memory")
+            return value
+
+        assert decorators.cupy(fails_once)("payload") == "payload"
+        assert calls == ["payload", "payload"]
+        assert [event for event in module.events if event[0] == "free"] == [
+            ("free", "regular"),
+            ("free", "pinned"),
+        ]
+
+        calls.clear()
+        with pytest.raises(MemoryError, match="out of memory"):
+            decorators.cupy(fails_once, oom_recovery=False)("payload")
+        assert calls == ["payload"]
+
+    def test_dtype_is_restored_by_name_across_libraries(self, monkeypatch):
         class TorchDtype:
             def __str__(self):
                 return "torch.uint16"
@@ -191,12 +144,11 @@ class TestThreadGPUContext:
 
         converted = []
 
-        def scale_dtype(memory_type, array, target_dtype, module=None):
-            del memory_type, module
-            converted.append(target_dtype)
+        def scale_dtype(library, array, target_dtype):
+            converted.append((library.name, target_dtype))
             return Array(np.dtype(target_dtype))
 
-        monkeypatch.setattr(MemoryType, "scale_dtype", scale_dtype)
+        monkeypatch.setattr(ArrayLibrary, "scale_dtype", scale_dtype)
 
         @memory_types("torch", "jax")
         def convert(_image):
@@ -205,8 +157,32 @@ class TestThreadGPUContext:
         wrapped = wrap_dtype_preserving_callable(convert, MemoryType.JAX)
         result = wrapped(Array(TorchDtype()))
 
-        assert converted == ["uint16"]
+        assert converted == [("jax", "uint16")]
         assert result.dtype == np.dtype("uint16")
+
+    @pytest.mark.parametrize("name", ["numpy", "cupy"])
+    def test_decorated_function_pickles_without_this_threads_streams(self, name, monkeypatch):
+        # A function with no importable name, as kept by an undo snapshot: dill
+        # stores its body, and the stream of the thread that made it stays behind.
+        module = FakeCupy(device_count=1)
+        monkeypatch.setitem(sys.modules, "cupy", module)
+        stream = ArrayLibrary.named("cupy").thread_stream(AcceleratorDevice(0))
+        stream.unpicklable = threading.Lock()
+
+        @getattr(decorators, name)
+        def declared(image, scale=3):
+            return image * scale
+
+        restored = dill.loads(dill.dumps(declared))
+
+        assert restored is not declared
+        assert restored.__name__ == declared.__name__
+        assert restored.__wrapped__.__name__ == declared.__wrapped__.__name__
+        assert restored.execution_memory_type == name
+        np.testing.assert_array_equal(
+            restored(np.array([1, 2], dtype=np.uint16), scale=4), [4, 8]
+        )
+        assert ArrayLibrary.named("cupy").thread_stream(AcceleratorDevice(0)) is stream
 
 
 class TestMemoryTypesDecorator:
@@ -287,9 +263,6 @@ class TestMemoryTypesDecorator:
         torch = pytest.importorskip("torch")
         from arraybridge.decorators import numpy
 
-        if not MemoryType.TORCH.available_device_ids(torch):
-            pytest.skip("PyTorch GPU stacking requires an available device")
-
         @numpy(output_type="torch", slice_by_slice_default=True)
         def planes_to_torch(value):
             return torch.as_tensor(value)
@@ -301,15 +274,34 @@ class TestMemoryTypesDecorator:
         assert result.dtype is torch.uint16
         assert tuple(result.shape) == source.shape
 
-    def test_decorator_exports_are_declaration_derived(self):
-        import arraybridge
-        from arraybridge import decorators
+    def test_every_registered_library_has_a_decorator(self):
+        names = {library.name for library in ArrayLibrary.all()}
 
-        expected = {memory_type.value for memory_type in MemoryType}
+        assert names <= set(dir(decorators))
+        assert names <= set(arraybridge.__all__)
+        for name in names:
+            decorator = getattr(decorators, name)
+            assert decorator is getattr(arraybridge, name)
+            assert decorator.__name__ == name
+            assert ArrayLibrary.named(name).display_name in decorator.__doc__
+        with pytest.raises(AttributeError):
+            decorators.not_a_library
 
-        assert expected <= set(decorators.__all__)
-        assert expected <= set(arraybridge.__all__)
-        assert all(callable(getattr(arraybridge, name)) for name in expected)
+    @pytest.mark.torch
+    def test_torch_function_runs_in_main_memory_without_cuda(self):
+        torch = pytest.importorskip("torch")
+
+        @arraybridge.torch
+        def double(tensor):
+            return tensor * 2
+
+        source = torch.arange(6, dtype=torch.int32).reshape(2, 3)
+        result = double(source)
+
+        assert isinstance(result, torch.Tensor) and not result.is_cuda
+        assert result.dtype is torch.int32
+        assert double.execution_memory_type == "torch"
+        np.testing.assert_array_equal(result.numpy(), np.arange(6).reshape(2, 3) * 2)
 
     def test_memory_types_preserves_function_metadata(self):
         """Test that memory_types preserves function name, docstring, etc."""
@@ -327,12 +319,6 @@ class TestMemoryTypesDecorator:
 
 class TestFrameworkDecorators:
     """Tests for auto-generated framework-specific decorators."""
-
-    def test_numpy_decorator_exists(self):
-        """Test that numpy decorator is available."""
-        from arraybridge.decorators import numpy
-
-        assert callable(numpy)
 
     def test_numpy_decorator_basic(self):
         """Test basic numpy decorator functionality."""
@@ -441,36 +427,6 @@ class TestFrameworkDecorators:
             return unchanged_payload
 
         assert unchanged(np.zeros(3, dtype=np.float32)) is unchanged_payload
-
-    def test_cupy_decorator_exists(self):
-        """Test that cupy decorator is available."""
-        from arraybridge.decorators import cupy
-
-        assert callable(cupy)
-
-    def test_torch_decorator_exists(self):
-        """Test that torch decorator is available."""
-        from arraybridge.decorators import torch
-
-        assert callable(torch)
-
-    def test_tensorflow_decorator_exists(self):
-        """Test that tensorflow decorator is available."""
-        from arraybridge.decorators import tensorflow
-
-        assert callable(tensorflow)
-
-    def test_jax_decorator_exists(self):
-        """Test that jax decorator is available."""
-        from arraybridge.decorators import jax
-
-        assert callable(jax)
-
-    def test_pyclesperanto_decorator_exists(self):
-        """Test that pyclesperanto decorator is available."""
-        from arraybridge.decorators import pyclesperanto
-
-        assert callable(pyclesperanto)
 
 
 class TestDecoratorParameters:

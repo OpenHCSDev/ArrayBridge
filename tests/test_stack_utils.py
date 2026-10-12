@@ -1,381 +1,132 @@
-"""Tests for arraybridge.stack_utils module."""
+"""Stacking 2D slices into a 3D array of a named library on a device, and back."""
 
 import sys
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-
-class _FakeDeviceScope:
-    def __init__(self, state, device_id):
-        self._state = state
-        self._device_id = device_id
-        self._previous = None
-
-    def __enter__(self):
-        self._previous = self._state["device"]
-        self._state["device"] = self._device_id
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self._state["device"] = self._previous
-        return False
-
-
-class _FakeCupyArray:
-    __module__ = "cupy"
-
-    def __init__(self, values, device_id, state):
-        self.values = np.asarray(values)
-        self.device = SimpleNamespace(id=device_id)
-        self._state = state
-
-    @property
-    def shape(self):
-        return self.values.shape
-
-    @property
-    def dtype(self):
-        return self.values.dtype
-
-    def copy(self):
-        return type(self)(self.values.copy(), self._state["device"], self._state)
-
-    def __getitem__(self, index):
-        return type(self)(self.values[index], self.device.id, self._state)
-
-    def __setitem__(self, index, value):
-        self.values[index] = value.values
-
-
-def _fake_cupy_module(state):
-    runtime = SimpleNamespace(
-        getDeviceCount=lambda: 2,
-        getDevice=lambda: state["device"],
-    )
-    cuda = SimpleNamespace(
-        runtime=runtime,
-        Device=lambda device_id: _FakeDeviceScope(state, device_id),
-    )
-    return SimpleNamespace(
-        cuda=cuda,
-        stack=lambda values, axis: _FakeCupyArray(
-            np.stack([value.values for value in values], axis=axis),
-            state["device"],
-            state,
-        ),
-    )
-
-
-class _FakeTensorFlowTensor:
-    __module__ = "tensorflow"
-
-    def __init__(self, values, device_id, state):
-        self.values = np.asarray(values)
-        self.device = f"/device:GPU:{device_id}"
-        self._state = state
-
-    @property
-    def shape(self):
-        return self.values.shape
-
-    @property
-    def dtype(self):
-        return self.values.dtype
-
-    def __getitem__(self, index):
-        return type(self)(self.values[index], int(self.device.rsplit(":", 1)[-1]), self._state)
-
-    def numpy(self):
-        return self.values
-
-
-def _fake_tensorflow_module(state):
-    def device_scope(name):
-        return _FakeDeviceScope(state, int(name.rsplit(":", 1)[-1]))
-
-    return SimpleNamespace(
-        config=SimpleNamespace(
-            list_logical_devices=lambda kind: [object(), object()] if kind == "GPU" else []
-        ),
-        device=device_scope,
-        identity=lambda data: _FakeTensorFlowTensor(data.values, state["device"], state),
-        stack=lambda values, axis: _FakeTensorFlowTensor(
-            np.stack([value.values for value in values], axis=axis),
-            state["device"],
-            state,
-        ),
-    )
-
-
-class TestStackUtils:
-    """Tests for stack utilities functions."""
-
-    def test_is_2d_numpy(self):
-        """Test _is_2d with numpy arrays."""
-        from arraybridge.stack_utils import _is_2d
-
-        # 2D array
-        arr_2d = np.array([[1, 2], [3, 4]])
-        assert _is_2d(arr_2d) is True
-
-        # 1D array
-        arr_1d = np.array([1, 2, 3])
-        assert _is_2d(arr_1d) is False
-
-        # 3D array
-        arr_3d = np.array([[[1, 2]], [[3, 4]]])
-        assert _is_2d(arr_3d) is False
-
-    def test_is_3d_numpy(self):
-        """Test _is_3d with numpy arrays."""
-        from arraybridge.stack_utils import _is_3d
-
-        # 3D array
-        arr_3d = np.array([[[1, 2]], [[3, 4]]])
-        assert _is_3d(arr_3d) is True
-
-        # 2D array
-        arr_2d = np.array([[1, 2], [3, 4]])
-        assert _is_3d(arr_2d) is False
-
-        # 1D array
-        arr_1d = np.array([1, 2, 3])
-        assert _is_3d(arr_1d) is False
-
-    def test_enforce_gpu_device_requirements_valid(self, monkeypatch):
-        """Test _enforce_gpu_device_requirements with valid inputs."""
-        from arraybridge.stack_utils import _enforce_gpu_device_requirements
-
-        # CPU memory type should not raise
-        _enforce_gpu_device_requirements("numpy", 0)
-
-        torch = SimpleNamespace(
-            cuda=SimpleNamespace(is_available=lambda: True, device_count=lambda: 2)
-        )
-        monkeypatch.setitem(sys.modules, "torch", torch)
-
-        _enforce_gpu_device_requirements("torch", 0)
-        _enforce_gpu_device_requirements("torch", 1)
-
-    def test_enforce_gpu_device_requirements_invalid_gpu_id(self, monkeypatch):
-        """Test _enforce_gpu_device_requirements with invalid GPU device ID."""
-        from arraybridge.stack_utils import _enforce_gpu_device_requirements
-
-        torch = SimpleNamespace(
-            cuda=SimpleNamespace(is_available=lambda: True, device_count=lambda: 2)
-        )
-        monkeypatch.setitem(sys.modules, "torch", torch)
-
-        with pytest.raises(ValueError, match="device -1 is unavailable"):
-            _enforce_gpu_device_requirements("torch", -1)
-
-        with pytest.raises(ValueError, match="device 2 is unavailable"):
-            _enforce_gpu_device_requirements("torch", 2)
-
-    def test_cpu_only_jax_cannot_satisfy_stack_device_requirement(self, monkeypatch):
-        from arraybridge.stack_utils import _enforce_gpu_device_requirements
-
-        cpu_device = SimpleNamespace(platform="cpu")
-        monkeypatch.setitem(sys.modules, "jax", SimpleNamespace(devices=lambda: [cpu_device]))
-
-        with pytest.raises(ValueError, match="available device IDs are \\(\\)"):
-            _enforce_gpu_device_requirements("jax", 0)
-
-    def test_stack_slices_empty_list(self):
-        """Test stack_slices with empty list raises error."""
-        from arraybridge.stack_utils import stack_slices
-
-        with pytest.raises(ValueError) as exc_info:
-            stack_slices([], "numpy", 0)
-        assert "Cannot stack empty list" in str(exc_info.value)
-
-    def test_stack_slices_not_2d(self):
-        """Test stack_slices with non-2D slices raises error."""
-        from arraybridge.stack_utils import stack_slices
-
-        slices = [np.array([1, 2, 3]), np.array([4, 5, 6])]  # 1D arrays
-
-        with pytest.raises(ValueError) as exc_info:
-            stack_slices(slices, "numpy", 0)
-        assert "not a 2D array" in str(exc_info.value)
-
-    def test_stack_slices_numpy(self):
-        """Test stack_slices with numpy arrays."""
-        from arraybridge.stack_utils import stack_slices
-
-        slice1 = np.array([[1, 2], [3, 4]])
-        slice2 = np.array([[5, 6], [7, 8]])
-        slices = [slice1, slice2]
-
-        result = stack_slices(slices, "numpy", 0)
-
-        assert result.shape == (2, 2, 2)
-        expected = np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
-        np.testing.assert_array_equal(result, expected)
-
-    def test_stack_slices_single_slice(self):
-        """Test stack_slices with single slice."""
-        from arraybridge.stack_utils import stack_slices
-
-        slice1 = np.array([[1, 2, 3], [4, 5, 6]])
-        result = stack_slices([slice1], "numpy", 0)
-
-        assert result.shape == (1, 2, 3)
-        expected = np.array([[[1, 2, 3], [4, 5, 6]]])
-        np.testing.assert_array_equal(result, expected)
-
-    def test_unstack_slices_not_3d(self):
-        """Test unstack_slices with non-3D array raises error."""
-        from arraybridge.stack_utils import unstack_slices
-
-        arr_2d = np.array([[1, 2], [3, 4]])
-
-        with pytest.raises(ValueError) as exc_info:
-            unstack_slices(arr_2d, "numpy", 0)
-        assert "Array must be 3D" in str(exc_info.value)
-
-    def test_unstack_slices_numpy(self):
-        """Test unstack_slices with numpy array."""
-        from arraybridge.stack_utils import unstack_slices
-
-        arr_3d = np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
-        result = unstack_slices(arr_3d, "numpy", 0)
-
-        assert len(result) == 2
-        assert result[0].shape == (2, 2)
-        assert result[1].shape == (2, 2)
-
-        np.testing.assert_array_equal(result[0], np.array([[1, 2], [3, 4]]))
-        np.testing.assert_array_equal(result[1], np.array([[5, 6], [7, 8]]))
-
-    def test_unstack_slices_single_slice(self):
-        """Test unstack_slices with single slice."""
-        from arraybridge.stack_utils import unstack_slices
-
-        arr_3d = np.array([[[1, 2, 3], [4, 5, 6]]])
-        result = unstack_slices(arr_3d, "numpy", 0)
-
-        assert len(result) == 1
-        assert result[0].shape == (2, 3)
-        np.testing.assert_array_equal(result[0], np.array([[1, 2, 3], [4, 5, 6]]))
-
-    def test_unstack_slices_validate_slices_false(self):
-        """Test unstack_slices with validate_slices=False."""
-        from arraybridge.stack_utils import unstack_slices
-
-        arr_3d = np.array([[[1, 2]], [[3, 4]]])  # Shape: (2, 1, 2)
-        result = unstack_slices(arr_3d, "numpy", 0, validate_slices=False)
-
-        assert len(result) == 2
-        assert result[0].shape == (1, 2)  # Each slice has shape (1, 2)
-        assert result[1].shape == (1, 2)
-
-    def test_numpy_stack_unstack_roundtrip(self):
-        """Test roundtrip: stack_slices -> unstack_slices."""
-        from arraybridge.stack_utils import stack_slices, unstack_slices
-
-        # Create test slices
-        slice1 = np.array([[1, 2], [3, 4]])
-        slice2 = np.array([[5, 6], [7, 8]])
-        original_slices = [slice1, slice2]
-
-        # Stack them
-        stacked = stack_slices(original_slices, "numpy", 0)
-
-        # Unstack them
-        unstaked = unstack_slices(stacked, "numpy", 0)
-
-        # Verify roundtrip
-        assert len(unstaked) == len(original_slices)
-        for original, result in zip(original_slices, unstaked):
-            np.testing.assert_array_equal(original, result)
-
-    def test_same_framework_stack_and_unstack_honor_requested_device(self, monkeypatch):
-        from arraybridge.stack_utils import stack_slices, unstack_slices
-
-        state = {"device": 0}
-        monkeypatch.setitem(sys.modules, "cupy", _fake_cupy_module(state))
-        inputs = [
-            _FakeCupyArray([[1, 2], [3, 4]], 0, state),
-            _FakeCupyArray([[5, 6], [7, 8]], 0, state),
-        ]
-
-        stacked = stack_slices(inputs, "cupy", 1)
-        slices = unstack_slices(stacked, "cupy", 1)
+from arraybridge.devices import HOST, AcceleratorDevice
+from arraybridge.libraries import ArrayLibrary
+from arraybridge.stack_utils import _is_2d, _is_3d, stack_slices, unstack_slices
+from tests.fakes import (
+    FakeCupy,
+    FakeCupyArray,
+    FakePyclesperanto,
+    FakePyclesperantoArray,
+    FakeTensorflow,
+    FakeTensorflowTensor,
+    FakeTorch,
+    FakeTorchTensor,
+)
+
+PLANES = [np.array([[1, 2], [3, 4]]), np.array([[5, 6], [7, 8]])]
+
+
+@pytest.mark.parametrize("rank", [1, 2, 3])
+def test_rank_checks(rank):
+    values = np.zeros((2,) * rank)
+
+    assert _is_2d(values) is (rank == 2)
+    assert _is_3d(values) is (rank == 3)
+    assert not _is_2d("no shape") and not _is_3d("no shape")
+
+
+class TestNumpy:
+    @pytest.mark.parametrize("planes", [PLANES, PLANES[:1]], ids=["two", "one"])
+    def test_stack_and_unstack_round_trip(self, planes):
+        stacked = stack_slices(planes, "numpy", HOST)
+        unstacked = unstack_slices(stacked, "numpy", HOST)
+
+        assert stacked.shape == (len(planes), 2, 2)
+        np.testing.assert_array_equal(stacked, np.stack(planes))
+        assert len(unstacked) == len(planes)
+        for original, result in zip(planes, unstacked, strict=True):
+            assert result.shape == (2, 2)
+            np.testing.assert_array_equal(result, original)
+
+    def test_unstack_can_skip_the_slice_check(self):
+        slices = unstack_slices(np.zeros((2, 1, 2)), "numpy", HOST, validate_slices=False)
+
+        assert [each.shape for each in slices] == [(1, 2), (1, 2)]
+
+    def test_malformed_input_is_rejected(self):
+        with pytest.raises(ValueError, match="Cannot stack empty list"):
+            stack_slices([], "numpy", HOST)
+        with pytest.raises(ValueError, match="Slice at index 0 is not a 2D array"):
+            stack_slices([np.array([1, 2, 3])], "numpy", HOST)
+        with pytest.raises(ValueError, match="Array must be 3D"):
+            unstack_slices(PLANES[0], "numpy", HOST)
+
+    def test_unregistered_library_and_missing_device_are_rejected(self):
+        with pytest.raises(ValueError, match="not a registered array library"):
+            stack_slices(PLANES, "invalid_type", HOST)
+        with pytest.raises(ValueError, match="NumPy device accelerator:0 is unavailable"):
+            stack_slices(PLANES, "numpy", AcceleratorDevice(0))
+        with pytest.raises(ValueError, match="NumPy device accelerator:0 is unavailable"):
+            unstack_slices(np.stack(PLANES), "numpy", AcceleratorDevice(0))
+
+
+class TestOtherLibraries:
+    def test_stack_and_unstack_move_to_the_requested_device(self, monkeypatch):
+        module = FakeCupy()
+        monkeypatch.setitem(sys.modules, "cupy", module)
+        inputs = [FakeCupyArray(plane, 0, module) for plane in PLANES]
+
+        stacked = stack_slices(inputs, "cupy", AcceleratorDevice(1))
+        slices = unstack_slices(stacked, "cupy", AcceleratorDevice(1))
 
         assert stacked.device.id == 1
-        assert [slice_.device.id for slice_ in slices] == [1, 1]
-        np.testing.assert_array_equal(stacked.values, np.stack([item.values for item in inputs]))
-        assert state["device"] == 0
+        assert [each.device.id for each in slices] == [1, 1]
+        np.testing.assert_array_equal(stacked.values, np.stack(PLANES))
+        assert module.current == 0
 
-    def test_tensorflow_stack_uses_immutable_framework_leaf(self, monkeypatch):
-        from arraybridge.stack_utils import stack_slices, unstack_slices
+    def test_tensorflow_tensors_are_copied_to_the_device_not_changed(self, monkeypatch):
+        module = FakeTensorflow()
+        monkeypatch.setitem(sys.modules, "tensorflow", module)
+        inputs = [FakeTensorflowTensor(plane, 0) for plane in PLANES]
 
-        state = {"device": 0}
-        monkeypatch.setitem(sys.modules, "tensorflow", _fake_tensorflow_module(state))
-        inputs = [
-            _FakeTensorFlowTensor([[1, 2], [3, 4]], 0, state),
-            _FakeTensorFlowTensor([[5, 6], [7, 8]], 0, state),
-        ]
-
-        stacked = stack_slices(inputs, "tensorflow", 1)
-        slices = unstack_slices(stacked, "tensorflow", 1)
+        stacked = stack_slices(inputs, "tensorflow", AcceleratorDevice(1))
+        slices = unstack_slices(stacked, "tensorflow", AcceleratorDevice(1))
 
         assert stacked.device == "/device:GPU:1"
-        assert [slice_.device for slice_ in slices] == [
-            "/device:GPU:1",
-            "/device:GPU:1",
-        ]
-        np.testing.assert_array_equal(stacked.values, np.stack([item.values for item in inputs]))
-        assert state["device"] == 0
+        assert [each.device for each in slices] == ["/device:GPU:1", "/device:GPU:1"]
+        assert [each.device for each in inputs] == ["/device:GPU:0", "/device:GPU:0"]
+        np.testing.assert_array_equal(stacked.values, np.stack(PLANES))
+        assert module.current == 0
 
-    def test_pyclesperanto_stack_uses_binary_api_and_preserves_singleton_axis(self):
-        from arraybridge.array_operations import ArrayOperations
-        from arraybridge.types import MemoryType
+    def test_slices_of_another_library_are_converted_first(self, monkeypatch):
+        module = FakeTorch()
+        module.stack = lambda values, dim: FakeTorchTensor(
+            np.stack([each.values for each in values], axis=dim)
+        )
+        monkeypatch.setitem(sys.modules, "torch", module)
 
-        operations = ArrayOperations.for_memory(MemoryType.PYCLESPERANTO)
+        stacked = stack_slices([PLANES[0], FakeTorchTensor(PLANES[1])], "torch", HOST)
+        as_numpy = unstack_slices(stacked, "numpy", HOST)
 
-        class Array:
-            def __init__(self, values):
-                self.values = np.asarray(values)
-                self.shape = self.values.shape
-                self.dtype = self.values.dtype
+        assert isinstance(stacked, FakeTorchTensor)
+        np.testing.assert_array_equal(stacked.values, np.stack(PLANES))
+        np.testing.assert_array_equal(as_numpy, PLANES)
 
-        class Module:
-            calls = []
+    def test_pyclesperanto_stacks_pairwise_and_keeps_a_single_plane_3d(self, monkeypatch):
+        module = FakePyclesperanto()
+        monkeypatch.setitem(sys.modules, "pyclesperanto", module)
+        library = ArrayLibrary.named("pyclesperanto")
+        first, second, third = (
+            FakePyclesperantoArray(plane, "gpu0") for plane in (*PLANES, PLANES[0] + 8)
+        )
 
-            @classmethod
-            def create(cls, shape, dtype):
-                cls.calls.append(("create", shape))
-                return Array(np.empty(shape, dtype=dtype))
+        single = library.stack_arrays([first], AcceleratorDevice(0))
+        stack = library.stack_arrays([first, second, third], AcceleratorDevice(0))
 
-            @classmethod
-            def copy_slice(cls, source, target, index):
-                cls.calls.append(("copy_slice", index))
-                target.values[index] = source.values
-                return target
-
-            @classmethod
-            def concatenate_along_z(cls, left, right):
-                cls.calls.append(("concatenate", left.shape, right.shape))
-                left_values = left.values if left.values.ndim == 3 else left.values[None]
-                right_values = right.values if right.values.ndim == 3 else right.values[None]
-                return Array(np.concatenate((left_values, right_values), axis=0))
-
-        first = Array([[1, 2], [3, 4]])
-        second = Array([[5, 6], [7, 8]])
-        third = Array([[9, 10], [11, 12]])
-
-        singleton = operations.stack([first], Module)
-        stack = operations.stack([first, second, third], Module)
-
-        assert singleton.shape == (1, 2, 2)
+        assert single.shape == (1, 2, 2)
         assert stack.shape == (3, 2, 2)
-        assert Module.calls == [
+        np.testing.assert_array_equal(stack.values[2], third.values)
+        assert module.events == [
             ("create", (1, 2, 2)),
             ("copy_slice", 0),
             ("concatenate", (2, 2), (2, 2)),
             ("concatenate", (2, 2, 2), (2, 2)),
         ]
+        with pytest.raises(ValueError, match="empty pyclesperanto sequence"):
+            library.stack_arrays([], AcceleratorDevice(0))

@@ -42,13 +42,20 @@ _LAZY_EXPORTS: dict[str, str] = {
     "_supports_dlpack": ".utils",
 }
 
-# Every lazy export, plus the decorator named after each registered library.
-__all__ = [*_LAZY_EXPORTS, "numpy", "cupy", "torch", "tensorflow", "jax", "pyclesperanto"]
+def _library_names() -> list[str]:
+    """The registered library names; each is also the name of its decorator."""
+
+    from arraybridge.libraries import ArrayLibrary
+
+    return list(ArrayLibrary.__registry__)
 
 
 def __getattr__(name: str):
     import importlib
 
+    if name == "__all__":
+        # Read on demand so that a library registered later is exported too.
+        return [*_LAZY_EXPORTS, *_library_names()]
     # A name that is not a fixed export is the decorator of a registered library.
     module_name = _LAZY_EXPORTS.get(name, ".decorators")
     if name.startswith("_") and name not in _LAZY_EXPORTS:
@@ -60,4 +67,4 @@ def __getattr__(name: str):
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(_LAZY_EXPORTS))
+    return sorted(set(globals()) | set(_LAZY_EXPORTS) | set(_library_names()))

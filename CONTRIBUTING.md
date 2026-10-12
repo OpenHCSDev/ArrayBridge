@@ -117,29 +117,34 @@ git checkout -b fix/issue-description
 Use Google-style docstrings:
 
 ```python
-def convert_memory(data: Any, source_type: str, target_type: str, gpu_id: int) -> Any:
+def convert_memory(
+    data: Array,
+    source_type: str | MemoryType,
+    target_type: str | MemoryType,
+    device: Device,
+) -> Array:
     """
-    Convert data between memory types.
+    Convert data from the source library to the target library on a device.
 
     Args:
-        data: The data to convert
+        data: The array to convert
         source_type: The source memory type (e.g., "numpy", "torch")
         target_type: The target memory type (e.g., "cupy", "jax")
-        gpu_id: The target GPU device ID
+        device: The device of the target library to put the result on
 
     Returns:
-        The converted data in the target memory type
+        The converted array in the target memory type
 
     Raises:
-        ValueError: If source_type or target_type is invalid
+        ValueError: If source_type or target_type is not a registered library
         MemoryConversionError: If conversion fails
 
     Example:
         import numpy as np
-        from arraybridge import convert_memory
+        from arraybridge import HOST, convert_memory
 
         data = np.array([1, 2, 3])
-        result = convert_memory(data, "numpy", "torch", gpu_id=0)
+        result = convert_memory(data, "numpy", "torch", HOST)
     """
 ```
 
@@ -159,22 +164,22 @@ def convert_memory(data: Any, source_type: str, target_type: str, gpu_id: int) -
 ```python
 import pytest
 import numpy as np
-from arraybridge import convert_memory
+from arraybridge import HOST, convert_memory
 
 class TestConvertMemory:
     """Tests for convert_memory function."""
 
     def test_convert_numpy_to_numpy(self):
-        """Test converting NumPy to NumPy (no-op)."""
+        """Converting NumPy to NumPy on the host returns the same array."""
         arr = np.array([1, 2, 3])
-        result = convert_memory(arr, "numpy", "numpy", gpu_id=0)
-        np.testing.assert_array_equal(result, arr)
+        result = convert_memory(arr, "numpy", "numpy", HOST)
+        assert result is arr
 
     def test_invalid_source_type_raises_error(self):
         """Test that invalid source type raises ValueError."""
         arr = np.array([1, 2, 3])
         with pytest.raises(ValueError):
-            convert_memory(arr, "invalid", "numpy", gpu_id=0)
+            convert_memory(arr, "invalid", "numpy", HOST)
 ```
 
 ### Running Tests
@@ -400,18 +405,13 @@ GitHub Actions will automatically:
 4. **Test thoroughly**: Include unit, integration, and edge case tests
 5. **Maintain compatibility**: Avoid breaking changes when possible
 
-### Adding Framework Support
+### Adding Library Support
 
-To add support for a new framework:
-
-1. Add one `ArrayOperations` leaf in `array_operations.py` declaring its `memory_type`.
-2. Add one `MemoryType` declaration carrying its runtime leaves.
-3. Add detection, conversion-pair, stack, cross-device, and optional-dependency tests.
-4. Update the extension and reference documentation.
-
-Do not add framework behavior to `_FRAMEWORK_CONFIG`, a consumer registry, or
-generated decorator exports. See `ADDING_NEW_FRAMEWORKS.md` for the complete
-declaration-owned extension procedure.
+A new library is one class: a subclass of `ArrayLibrary` with the role parents
+it plays, `name = "..."`, and the abstract methods of those parents. Lookup,
+the `MemoryType` member, the decorator and the conversion routes follow from
+the class. See `ADDING_NEW_FRAMEWORKS.md` for a runnable example, the methods
+each role parent asks for, and the tests to add.
 
 ## Getting Help
 
@@ -427,4 +427,4 @@ Contributors will be recognized in:
 - Release notes (for significant contributions)
 - Project README (for major features)
 
-Thank you for contributing to arraybridge! 🎉
+Thank you for contributing to arraybridge!

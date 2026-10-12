@@ -46,7 +46,7 @@ jobs:
         run: |
           # Run all GPU cleanup tests
           # Tests will use frameworks if available, skip gracefully if not
-          pytest -v tests/test_gpu_cleanup.py \
+          pytest -v tests/test_libraries.py \
             --cov=arraybridge \
             --cov-report=term-missing \
             --cov-report=html \

@@ -13,15 +13,15 @@ by the repository:
    python -m pytest
    python -m sphinx -E -W --keep-going -b html docs/source docs/source/_build/html
 
-Framework extensions
---------------------
+Adding a library
+----------------
 
-A framework extension must update the nominal ``MemoryType`` declaration and
-its typed operation leaves. Add detection, conversion-pair, stack,
-cross-device, and optional-dependency tests. Consumers should not maintain a
-second framework-name registry.
+A new library is one ``ArrayLibrary`` subclass. Add tests for detection,
+conversion against the other libraries, stacking, its devices and the case
+where the package is not installed.
 
-See :doc:`advanced_topics` for the ownership model and the repository's
+See :doc:`advanced_topics` for how the class is put together and the
+repository's
 `contribution guide
 <https://github.com/OpenHCSDev/arraybridge/blob/main/CONTRIBUTING.md>`_ for the
 review workflow.
