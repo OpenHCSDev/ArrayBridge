@@ -23,7 +23,7 @@ from arraybridge.decorators import (
 from arraybridge.devices import AcceleratorDevice
 from arraybridge.libraries import ArrayLibrary
 from arraybridge.types import MemoryType
-from tests.fakes import FakeCupy, FakeTorch
+from tests.fakes import FakeCupy, FakeCupyArray, FakeTorch, FakeTorchTensor
 
 
 class TestDtypeConversion:
@@ -63,30 +63,92 @@ class TestExecutionOnAccelerators:
     """What a library's devices need around a decorated call."""
 
     @pytest.mark.parametrize(
-        ("name", "fake"), [("torch", FakeTorch), ("cupy", FakeCupy)], ids=["torch", "cupy"]
+        ("name", "fake", "on_device"),
+        [
+            ("torch", FakeTorch, lambda module, index: FakeTorchTensor([1], cuda_index=index)),
+            ("cupy", FakeCupy, lambda module, index: FakeCupyArray([1], index, module)),
+        ],
+        ids=["torch", "cupy"],
     )
-    def test_cuda_call_runs_on_this_threads_stream(self, name, fake, monkeypatch):
-        module = fake(device_count=1)
+    def test_cuda_call_runs_on_the_stream_of_the_device_holding_its_arguments(
+        self, name, fake, on_device, monkeypatch
+    ):
+        module = fake(device_count=2)
         monkeypatch.setitem(sys.modules, name, module)
+        # The data is on device 1 while the process has device 0 selected.
+        payload, again = on_device(module, 1), on_device(module, 1)
 
         @getattr(decorators, name)
         def identity(value):
             module.events.append(("call", value))
             return value
 
-        assert identity("payload") == "payload"
-        assert identity("again") == "again"
-        stream = ArrayLibrary.named(name).thread_stream(AcceleratorDevice(0))
+        assert identity(payload) is payload
+        assert identity(again) is again
+        stream = ArrayLibrary.named(name).thread_stream(AcceleratorDevice(1))
         assert module.events == [
-            ("enter", 0),
-            ("exit", 0),
+            ("enter", 1),
+            ("exit", 1),
+            ("stream enter", stream),
+            ("call", payload),
+            ("stream exit", stream),
+            ("stream enter", stream),
+            ("call", again),
+            ("stream exit", stream),
+        ]
+
+    def test_cupy_call_without_an_array_runs_on_the_selected_device(self, monkeypatch):
+        # CuPy has no main memory, so a call always runs on an accelerator.
+        module = FakeCupy(device_count=2)
+        module.current = 1
+        monkeypatch.setitem(sys.modules, "cupy", module)
+
+        @decorators.cupy
+        def identity(value):
+            module.events.append(("call", value))
+            return value
+
+        assert identity("payload") == "payload"
+        stream = ArrayLibrary.named("cupy").thread_stream(AcceleratorDevice(1))
+        assert module.events[-3:] == [
             ("stream enter", stream),
             ("call", "payload"),
             ("stream exit", stream),
-            ("stream enter", stream),
-            ("call", "again"),
-            ("stream exit", stream),
         ]
+
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            lambda: (FakeTorchTensor([1, 2]),),
+            lambda: (np.array([1, 2]),),
+            lambda: ("no array at all",),
+        ],
+        ids=["host tensor", "numpy array", "no array"],
+    )
+    def test_torch_call_in_main_memory_never_touches_cuda(self, arguments, monkeypatch):
+        class TorchWithUntouchableCuda:
+            Tensor = FakeTorchTensor
+
+            @property
+            def cuda(self):
+                raise AssertionError("a call in main memory asked torch.cuda for something")
+
+        monkeypatch.setitem(sys.modules, "torch", TorchWithUntouchableCuda())
+        calls = []
+
+        @decorators.torch
+        def fails_once(value):
+            calls.append(value)
+            if len(calls) == 1:
+                raise MemoryError("out of memory")
+            return value
+
+        # Not even an out-of-memory error makes a host call clear accelerator caches.
+        with pytest.raises(MemoryError):
+            fails_once(*arguments())
+        (value,) = arguments()
+        assert fails_once(value) is value
+        assert len(calls) == 2
 
     def test_torch_without_cuda_calls_the_function_directly(self, monkeypatch):
         module = FakeTorch()
@@ -179,9 +241,7 @@ class TestExecutionOnAccelerators:
         assert restored.__name__ == declared.__name__
         assert restored.__wrapped__.__name__ == declared.__wrapped__.__name__
         assert restored.execution_memory_type == name
-        np.testing.assert_array_equal(
-            restored(np.array([1, 2], dtype=np.uint16), scale=4), [4, 8]
-        )
+        np.testing.assert_array_equal(restored(np.array([1, 2], dtype=np.uint16), scale=4), [4, 8])
         assert ArrayLibrary.named("cupy").thread_stream(AcceleratorDevice(0)) is stream
 
 

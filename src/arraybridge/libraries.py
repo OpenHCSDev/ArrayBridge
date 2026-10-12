@@ -431,9 +431,7 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
             try:
                 library.cleanup_loaded(device)
             except Exception as error:
-                logger.warning(
-                    "Failed to cleanup %s GPU memory: %s", library.display_name, error
-                )
+                logger.warning("Failed to cleanup %s GPU memory: %s", library.display_name, error)
 
     def run_with_oom_recovery(
         self,
@@ -796,19 +794,50 @@ class AcceleratorDevices(ArrayLibrary[NativeT]):
     def _upload(self, data: np.ndarray, device: AcceleratorDevice) -> NativeT:
         """Create a native array on ``device``; called inside that device's scope."""
 
-    def _thread_execution(
-        self,
-    ) -> tuple[AcceleratorDevice | None, AbstractContextManager[None]]:
-        """The device a decorated function runs on, if one is selected, and its scope."""
+    def _argument_device(self, arguments: Sequence[object]) -> Device | None:
+        """The device of the first array of this library among a call's arguments."""
 
-        return None, nullcontext()
+        if self.loaded_module() is None:
+            return None
+        for value in arguments:
+            if self.accepts(value):
+                return self.device_of(value)
+        return None
+
+    def _selected_accelerator(self) -> AcceleratorDevice | None:
+        """The accelerator the library has selected for this thread, where it says."""
+
+        return None
+
+    def _accelerator_call_scope(
+        self, device: AcceleratorDevice | None
+    ) -> AbstractContextManager[None]:
+        """What a call running on ``device`` is wrapped in."""
+
+        del device
+        return nullcontext()
 
     def execution_wrapper(self, func: Callable[P, R], oom_recovery: bool) -> Callable[P, R]:
+        """Run ``func`` on the accelerator holding its arguments; a host call is untouched.
+
+        The device is read from the arguments. A call whose arrays are in main
+        memory, or that passes no array of a library that has main memory,
+        runs as written: nothing of the accelerator is asked or initialised.
+        """
+
         @functools.wraps(func)
         def on_accelerator(*args: P.args, **kwargs: P.kwargs) -> R:
-            if self.import_if_installed() is None or not self.accelerator_devices():
+            held_on = self._argument_device((*args, *kwargs.values()))
+            if isinstance(held_on, AcceleratorDevice):
+                device: AcceleratorDevice | None = held_on
+            elif held_on is not None or self.host_devices():
                 return func(*args, **kwargs)
-            device, scope = self._thread_execution()
+            elif self.import_if_installed() is None or not self.accelerator_devices():
+                return func(*args, **kwargs)
+            else:
+                # Every array of this library lives on an accelerator.
+                device = self._selected_accelerator()
+            scope = self._accelerator_call_scope(device)
 
             def execute() -> R:
                 with scope:
@@ -864,14 +893,15 @@ class CudaLibrary(AcceleratorDevices[NativeT]):
             )
         return streams[key]
 
-    def _thread_execution(
-        self,
-    ) -> tuple[AcceleratorDevice | None, AbstractContextManager[None]]:
-        device = self.current_device()
+    def _selected_accelerator(self) -> AcceleratorDevice | None:
+        return self.current_device()
+
+    def _accelerator_call_scope(
+        self, device: AcceleratorDevice | None
+    ) -> AbstractContextManager[None]:
         if device is None:
-            return None, nullcontext()
-        self.require_device(device)
-        return device, self.stream_scope(self.thread_stream(device))
+            return nullcontext()
+        return self.stream_scope(self.thread_stream(device))
 
     def cleanup_loaded(self, device: AcceleratorDevice | None = None) -> None:
         if self.loaded_module() is None:
@@ -912,9 +942,7 @@ class DLPackProtocolExport(ArrayLibrary[NativeT]):
         return True
 
     def exports_dlpack_data(self, data: NativeT) -> bool:
-        return any(
-            callable(getattr(data, attribute, None)) for attribute in self._export_methods
-        )
+        return any(callable(getattr(data, attribute, None)) for attribute in self._export_methods)
 
     def export_dlpack(self, data: NativeT) -> DLPackPayload | None:
         for attribute in self._export_methods:
@@ -1381,9 +1409,7 @@ class TensorflowLibrary(
     def export_dlpack(self, data: tensorflow.Tensor) -> DLPackPayload | None:
         if not self.exports_dlpack_data(data):
             return None
-        return DLPackPayload(
-            source=data, capsule=self.module.experimental.dlpack.to_dlpack(data)
-        )
+        return DLPackPayload(source=data, capsule=self.module.experimental.dlpack.to_dlpack(data))
 
     def _import_dlpack(self, payload: DLPackPayload) -> tensorflow.Tensor:
         return self.module.experimental.dlpack.from_dlpack(payload.capsule)
@@ -1410,9 +1436,7 @@ class TensorflowLibrary(
     def sum(self, data: tensorflow.Tensor, axis: Axis) -> tensorflow.Tensor:
         return self.module.reduce_sum(data, axis=axis)
 
-    def linspace(
-        self, start: float, stop: float, num: int, *, endpoint: bool
-    ) -> tensorflow.Tensor:
+    def linspace(self, start: float, stop: float, num: int, *, endpoint: bool) -> tensorflow.Tensor:
         if endpoint:
             return self.module.linspace(float(start), float(stop), num)
         return self.module.linspace(float(start), float(stop), num + 1)[:-1]
@@ -1460,17 +1484,13 @@ class TensorflowLibrary(
     def _stack(self, values: Sequence[tensorflow.Tensor]) -> tensorflow.Tensor:
         return self.module.stack(tuple(values), axis=0)
 
-    def _logical_and(
-        self, left: tensorflow.Tensor, right: tensorflow.Tensor
-    ) -> tensorflow.Tensor:
+    def _logical_and(self, left: tensorflow.Tensor, right: tensorflow.Tensor) -> tensorflow.Tensor:
         return self.module.logical_and(left, right)
 
     def _reshape(self, data: tensorflow.Tensor, shape: tuple[int, ...]) -> tensorflow.Tensor:
         return self.module.reshape(data, shape)
 
-    def _broadcast_to(
-        self, data: tensorflow.Tensor, shape: tuple[int, ...]
-    ) -> tensorflow.Tensor:
+    def _broadcast_to(self, data: tensorflow.Tensor, shape: tuple[int, ...]) -> tensorflow.Tensor:
         return self.module.broadcast_to(data, shape)
 
     def _ones_like(
@@ -1710,9 +1730,7 @@ class PyclesperantoLibrary(
     def _to_host(self, data: pyclesperanto.Array) -> np.ndarray:
         return self.module.pull(data)
 
-    def _scale_dtype(
-        self, result: pyclesperanto.Array, target_dtype: DType
-    ) -> pyclesperanto.Array:
+    def _scale_dtype(self, result: pyclesperanto.Array, target_dtype: DType) -> pyclesperanto.Array:
         module, np = self.module, _numpy()
         target_is_int = np.issubdtype(np.dtype(target_dtype), np.integer)
         if not (np.issubdtype(result.dtype, np.floating) and target_is_int):

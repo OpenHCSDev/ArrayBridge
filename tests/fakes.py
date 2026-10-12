@@ -104,6 +104,8 @@ class FakeCupyArray(_FakeArray):
 
 
 class FakeCupy:
+    ndarray = FakeCupyArray
+
     def __init__(self, device_count=2):
         self.events = []
         self.current = 0
@@ -161,6 +163,8 @@ class FakeTorchTensor(_FakeArray):
 
 class FakeTorch:
     """torch with main memory and ``device_count`` CUDA devices (none by default)."""
+
+    Tensor = FakeTorchTensor
 
     def __init__(self, device_count=0):
         self.events = []
