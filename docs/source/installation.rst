@@ -45,14 +45,14 @@ Verify the required NumPy path without optional frameworks:
 
    import numpy as np
 
-   from arraybridge import convert_memory, detect_memory_type
+   from arraybridge import HOST, convert_memory, detect_memory_type
 
    value = np.arange(3)
    assert detect_memory_type(value) == "numpy"
-   converted = convert_memory(value, "numpy", "numpy", gpu_id=0)
+   converted = convert_memory(value, "numpy", "numpy", HOST)
 
-An optional-framework conversion fails when that framework is not installed.
-ArrayBridge does not fall back to another target.
+A conversion to an optional library raises ``MemoryConversionError`` when that
+library is not installed. ArrayBridge does not substitute another target.
 
 See the `repository <https://github.com/OpenHCSDev/arraybridge>`_ for supported
 version constraints and current workflows.

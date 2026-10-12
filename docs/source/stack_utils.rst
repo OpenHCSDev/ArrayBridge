@@ -11,15 +11,19 @@ and returns its 2D planes.
 
    import numpy as np
 
-   from arraybridge import stack_slices, unstack_slices
+   from arraybridge import HOST, stack_slices, unstack_slices
 
    planes = [np.zeros((3, 5)), np.ones((3, 5))]
-   stack = stack_slices(planes, memory_type="numpy", gpu_id=0)
-   planes_again = unstack_slices(stack, memory_type="numpy", gpu_id=0)
+   stack = stack_slices(planes, memory_type="numpy", device=HOST)
+   planes_again = unstack_slices(stack, memory_type="numpy", device=HOST)
 
-Both functions require ``memory_type`` and ``gpu_id``. They validate dimensions
-and fail on empty/malformed inputs. A host should declare what the stack axis
-means; ArrayBridge owns only array shape, conversion, and device mechanics.
+Both functions require ``memory_type`` and ``device``, a device of the target
+library (see :doc:`converters`). They raise ``ValueError`` for an empty list,
+a wrong number of dimensions or a device the target library does not have.
+What the stack axis means is the application's knowledge.
 
-``process_slices`` is the lower-level helper used by decorated functions when
-``slice_by_slice=True``.
+``process_slices(image, func, args, kwargs, device=None)`` is the helper
+decorated functions use when ``slice_by_slice=True``. It unstacks on the
+device holding ``image`` unless ``device`` is given, calls ``func`` on each
+plane, and stacks the results in the library and on the device of the first
+result.

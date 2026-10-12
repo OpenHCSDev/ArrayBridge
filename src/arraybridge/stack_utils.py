@@ -10,10 +10,10 @@ on a single 2D slice. No logic may check, coerce, or infer rank at unstack time.
 """
 
 import logging
-from typing import Any
 
-from arraybridge.converters import detect_memory_type
-from arraybridge.types import MemoryType
+from arraybridge.converters import convert_memory
+from arraybridge.devices import Device
+from arraybridge.libraries import Array, ArrayLibrary
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 logger.debug("🔄 STACK_UTILS: Module loaded - memory conversion logging enabled")
 
 
-def _is_2d(data: Any) -> bool:
+def _is_2d(data: object) -> bool:
     """
     Check if data is a 2D array.
 
@@ -39,7 +39,7 @@ def _is_2d(data: Any) -> bool:
     return len(data.shape) == 2
 
 
-def _is_3d(data: Any) -> bool:
+def _is_3d(data: object) -> bool:
     """
     Check if data is a 3D array.
 
@@ -57,23 +57,7 @@ def _is_3d(data: Any) -> bool:
     return len(data.shape) == 3
 
 
-def _enforce_gpu_device_requirements(memory_type: str, gpu_id: int) -> None:
-    """
-    Enforce GPU device requirements.
-
-    Args:
-        memory_type: The memory type
-        gpu_id: The GPU device ID
-
-    Raises:
-        ValueError: If gpu_id is negative
-    """
-    mem_type = MemoryType(memory_type)
-    if mem_type.is_gpu:
-        mem_type.require_device(gpu_id)
-
-
-def stack_slices(slices: list[Any], memory_type: str, gpu_id: int) -> Any:
+def stack_slices(slices: list[Array], memory_type: str, device: Device) -> Array:
     """
     Stack 2D slices into a 3D array with the specified memory type.
 
@@ -83,14 +67,14 @@ def stack_slices(slices: list[Any], memory_type: str, gpu_id: int) -> Any:
     Args:
         slices: List of 2D slices (numpy arrays, cupy arrays, torch tensors, etc.)
         memory_type: The memory type to use for the stacked array (REQUIRED)
-        gpu_id: The target GPU device ID (REQUIRED)
+        device: The device of the target library to put the result on (REQUIRED)
 
     Returns:
         A 3D array with the specified memory type of shape [Z, Y, X]
 
     Raises:
         ValueError: If memory_type is not supported or slices is empty
-        ValueError: If gpu_id is negative for GPU memory types
+        ValueError: If the target library does not have the device
         ValueError: If slices are not 2D arrays
         MemoryConversionError: If conversion fails
     """
@@ -102,30 +86,22 @@ def stack_slices(slices: list[Any], memory_type: str, gpu_id: int) -> Any:
         if not _is_2d(slice_data):
             raise ValueError(f"Slice at index {i} is not a 2D array. All slices must be 2D.")
 
-    # Check GPU requirements
-    _enforce_gpu_device_requirements(memory_type, gpu_id)
+    library = ArrayLibrary.named(memory_type)
+    library.require_device(device)
 
-    # Convert each slice and enforce the requested framework-local device.
     conversion_count = 0
-    mem_type = MemoryType(memory_type)
     converted_slices = []
     for slice_data in slices:
-        source_type = detect_memory_type(slice_data)
-        if source_type == memory_type:
-            converted_data = mem_type.move_to_device(slice_data, gpu_id)
-        else:
-            from arraybridge.converters import convert_memory
-
-            converted_data = convert_memory(
-                data=slice_data,
-                source_type=source_type,
-                target_type=memory_type,
-                gpu_id=gpu_id,
-            )
+        source = ArrayLibrary.of(slice_data)
+        if source is not library:
             conversion_count += 1
-        converted_slices.append(converted_data)
+            converted_slices.append(
+                convert_memory(slice_data, str(source.name), memory_type, device)
+            )
+        else:
+            converted_slices.append(library.move_to_device(slice_data, device))
 
-    result = mem_type.stack_arrays(converted_slices, gpu_id)
+    result = library.stack_arrays(converted_slices, device)
 
     # 🔍 MEMORY CONVERSION LOGGING: Only log when conversions happen or issues occur
     if conversion_count > 0:
@@ -139,8 +115,8 @@ def stack_slices(slices: list[Any], memory_type: str, gpu_id: int) -> Any:
 
 
 def unstack_slices(
-    array: Any, memory_type: str, gpu_id: int, validate_slices: bool = True
-) -> list[Any]:
+    array: Array, memory_type: str, device: Device, validate_slices: bool = True
+) -> list[Array]:
     """
     Split a 3D array into 2D slices along axis 0 and convert to the specified memory type.
 
@@ -149,7 +125,7 @@ def unstack_slices(
     Args:
         array: 3D array to split - MUST BE 3D
         memory_type: The memory type to use for the output slices (REQUIRED)
-        gpu_id: The target GPU device ID (REQUIRED)
+        device: The device of the target library to put the result on (REQUIRED)
         validate_slices: If True, validates that each extracted slice is 2D
 
     Returns:
@@ -158,38 +134,29 @@ def unstack_slices(
     Raises:
         ValueError: If array is not 3D
         ValueError: If validate_slices is True and any extracted slice is not 2D
-        ValueError: If gpu_id is negative for GPU memory types
+        ValueError: If the target library does not have the device
         ValueError: If memory_type is not supported
         MemoryConversionError: If conversion fails
     """
-    # Detect input type and check if conversion is needed
-    input_type = detect_memory_type(array)
-    getattr(array, "shape", "unknown")
+    source = ArrayLibrary.of(array)
+    source_type = source.name
 
     # Verify the array is 3D - fail loudly if not
     if not _is_3d(array):
         raise ValueError(f"Array must be 3D, got shape {getattr(array, 'shape', 'unknown')}")
 
-    # Check GPU requirements
-    _enforce_gpu_device_requirements(memory_type, gpu_id)
-
-    # Convert to target memory type
-    source_type = input_type  # Reuse already detected type
-
-    # Direct conversion
-    if source_type == memory_type:
-        array = MemoryType(memory_type).move_to_device(array, gpu_id)
-    else:
-        # Convert and log the conversion
-        from arraybridge.converters import convert_memory
-
+    library = ArrayLibrary.named(memory_type)
+    library.require_device(device)
+    if source is not library:
         logger.debug(f"🔄 UNSTACK_SLICES: Converting array - {source_type} → {memory_type}")
-        array = convert_memory(
-            data=array, source_type=source_type, target_type=memory_type, gpu_id=gpu_id
-        )
+        array = convert_memory(array, str(source_type), memory_type, device)
+    else:
+        array = library.move_to_device(array, device)
 
     # Extract slices along axis 0 (already in the target memory type)
-    slices = [array[i] for i in range(array.shape[0])]
+    slices = [
+        getattr(array, "__getitem__")(index) for index in range(getattr(array, "shape")[0])
+    ]
 
     # Validate that all extracted slices are 2D if requested
     if validate_slices:

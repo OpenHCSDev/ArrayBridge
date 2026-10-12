@@ -1,8 +1,10 @@
 Memory declaration decorators
 =============================
 
-``memory_types`` and the six framework helpers declare callable memory
-contracts.
+``memory_types`` and the decorator named after each library (``numpy``,
+``cupy``, ``torch``, ``tensorflow``, ``jax``, ``pyclesperanto``) declare which
+library a function's input and output arrays belong to. A decorator exists for
+every registered library and is made on first access.
 
 .. code-block:: python
 
@@ -16,34 +18,34 @@ contracts.
    def offset(image, value=1):
        return image + value
 
-Framework helpers accept ``input_type``, ``output_type``, ``oom_recovery``, and
-``contract``. They may be used as ``@numpy`` or ``@numpy()``.
+The library decorators accept ``input_type``, ``output_type``,
+``oom_recovery``, ``contract``, ``slice_by_slice_default`` and
+``dtype_config_default``. They may be used as ``@numpy`` or ``@numpy()``.
 
 Direct-call behavior
 --------------------
 
-Decorators do not convert the input or output between frameworks. They attach
-metadata, add keyword-only ``slice_by_slice`` and ``dtype_config`` runtime
-parameters, apply the selected dtype policy, and wrap supported GPU frameworks
-with thread-local stream/OOM handling.
+Decorators do not convert the input or output between libraries. They set
+the memory type attributes, add the keyword-only ``slice_by_slice`` and
+``dtype_config`` parameters, apply the selected dtype policy, and wrap the
+call with ``library.execution_wrapper(func, oom_recovery)``: per-thread CUDA
+streams for CuPy and PyTorch and out-of-memory retries for libraries with
+accelerators (see :doc:`gpu_features`). For NumPy the wrapper adds nothing.
 
-Framework helpers also attach ``execution_memory_type``. It identifies the
-framework that owns the function body even when ``input_type`` or
-``output_type`` is overridden. Host runtimes use that declaration when scoping
-callable execution; boundary types alone do not prove execution ownership.
+The library decorators also set ``execution_memory_type``: the library the
+function body is written for, even when ``input_type`` or ``output_type``
+names another one.
 
-Metadata key API
-----------------
+Attribute names
+---------------
 
-``MemoryContractAttribute`` is the public owner of the callable metadata keys:
-``INPUT`` maps to ``input_memory_type``, ``OUTPUT`` maps to
-``output_memory_type``, and ``EXECUTION`` maps to ``execution_memory_type``.
-Each member provides ``read(namespace, default=None)`` and
-``write(namespace, value)`` for object and mapping namespaces. Host libraries
-can consume these members without maintaining a duplicate key registry.
+``MemoryContractAttribute`` names the attributes: ``INPUT`` is
+``input_memory_type``, ``OUTPUT`` is ``output_memory_type`` and ``EXECUTION``
+is ``execution_memory_type``. Each member has ``read(namespace, default=None)``
+and ``write(namespace, value)`` for objects and mappings.
 
-The decorator does not accept ``gpu_id`` or ``clear_cuda_cache``. Device
-selection belongs to explicit conversion or the host runtime. A non-callable
+The decorators take no device argument. The device is chosen by the
+conversion that produces the input or by the application. A non-callable
 ``contract`` is stored as declarative metadata; a callable contract validates
 the returned value.
 
@@ -54,6 +56,6 @@ Direct calls default to preserving the input dtype. Hosts can pass an object
 implementing ``DtypeConversionConfig`` to select native or explicit output dtype
 behavior.
 
-``wrap_dtype_preserving_callable(func, memory_type)`` exposes the dtype and
-slice-control wrapper as a public integration boundary for host registries that
-already own their memory and processing contracts.
+``wrap_dtype_preserving_callable(func, mem_type)`` applies only the dtype and
+slice wrapper, for applications that declare memory types themselves.
+``mem_type`` is a ``MemoryType`` member.

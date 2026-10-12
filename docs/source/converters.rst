@@ -1,47 +1,61 @@
-Conversion system
-=================
+Conversion
+==========
 
-``convert_memory(data, source_type, target_type, gpu_id)`` resolves the source
-and target ``MemoryType`` declarations and lets those declarations perform the
-conversion.
+``convert_memory(data, source_type, target_type, device)`` converts ``data``
+from the source library to the target library on ``device``. It looks up the
+two library objects and calls ``source.convert_to(data, target, device)``.
 
 .. code-block:: python
 
    import numpy as np
 
-   from arraybridge import MemoryType, convert_memory
+   from arraybridge import HOST, MemoryType, convert_memory
 
    value = np.arange(4)
-   result = convert_memory(
-       value,
-       MemoryType.NUMPY,
-       MemoryType.NUMPY,
-       0,
-   )
+   result = convert_memory(value, MemoryType.NUMPY, MemoryType.NUMPY, HOST)
+   assert result is value
 
-Both ``source_type`` and ``target_type`` accept either the canonical
-``MemoryType`` member or its string value. Decorators normalize the same
-members to string metadata at declaration time, so callable contracts and
-conversion plans share one taxonomy without carrying duplicate enum classes.
+``source_type`` and ``target_type`` accept a ``MemoryType`` member or its
+string value. Call ``detect_memory_type`` when the source library is not
+already known. Passing the wrong source type is a caller error.
 
-Call ``detect_memory_type`` when the source type is not already known. Passing a
-wrong source declaration is a caller error; conversion planning should keep the
-declared type aligned with the actual value.
+Devices
+-------
 
-Device semantics
-----------------
+``device`` is required and is a device of the target library: ``HOST`` for
+NumPy; ``AcceleratorDevice(i)`` for CuPy and pyclesperanto; either for
+PyTorch, JAX and TensorFlow. Moving an array between two devices of one
+library is a conversion with the same source and target type. See
+:doc:`api_reference` for the device values and the questions a library
+answers about them.
 
-``gpu_id`` is required. GPU converters use it for allocation or device
-selection. CPU conversion accepts the same argument for a uniform API. Moving a
-value between two devices is expressed as conversion with the target device id.
+.. code-block:: python
 
-Declarations prefer framework-native or DLPack paths when both endpoints
-support them and otherwise use an explicit NumPy round trip. No zero-copy
-guarantee applies to every pair.
+   import numpy as np
+
+   from arraybridge import AcceleratorDevice, MemoryConversionError, convert_memory
+
+   try:
+       convert_memory(np.arange(4), "numpy", "numpy", AcceleratorDevice(0))
+   except MemoryConversionError as error:
+       assert "accelerator:0 is unavailable" in str(error)
+   else:
+       raise AssertionError("NumPy has no accelerator device")
+
+Routes
+------
+
+A conversion tries, in order: a device move when source and target are the
+same library; a DLPack exchange when the target can wrap the source's buffer
+on its device; a copy through a NumPy array in main memory.
+``ConversionRoute.planned`` tells which is tried first for a pair, and a
+``ConversionObserver`` receives what actually ran; both are described in
+:doc:`api_reference`. No pair is promised to be zero-copy.
 
 Failures
 --------
 
-Invalid framework names raise ``ValueError``. Conversion failures raise
-``MemoryConversionError`` with source/target context. Optional frameworks are
-loaded only when their declaration is used.
+An unregistered library name raises ``ValueError``. Any failure during the
+conversion, including a missing optional package or a device the target does
+not have, raises ``MemoryConversionError`` with the source and target names.
+An optional library is imported only when a conversion uses it.

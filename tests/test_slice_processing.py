@@ -1,7 +1,13 @@
 """Tests for arraybridge.slice_processing module."""
 
+import sys
+
 import numpy as np
 import pytest
+
+from arraybridge.devices import AcceleratorDevice
+from arraybridge.slice_processing import process_slices
+from tests.fakes import FakeCupy, FakeCupyArray
 
 
 class TestProcessSlices:
@@ -9,8 +15,6 @@ class TestProcessSlices:
 
     def test_process_slices_single_output(self):
         """Test process_slices with function returning single output."""
-        from arraybridge.slice_processing import process_slices
-
         # Create a 3D array (2 slices of 2x2)
         image_3d = np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
 
@@ -25,8 +29,6 @@ class TestProcessSlices:
 
     def test_process_slices_tuple_output(self):
         """Test process_slices with function returning tuple (main + special outputs)."""
-        from arraybridge.slice_processing import process_slices
-
         # Create a 3D array
         image_3d = np.array([[[1, 2]], [[3, 4]]])
 
@@ -49,8 +51,6 @@ class TestProcessSlices:
 
     def test_process_slices_multiple_special_outputs(self):
         """Test process_slices with function returning multiple special outputs."""
-        from arraybridge.slice_processing import process_slices
-
         image_3d = np.array([[[1, 2]], [[3, 4]]])
 
         def func_multiple_special(slice_2d):
@@ -70,8 +70,6 @@ class TestProcessSlices:
 
     def test_process_slices_with_args_kwargs(self):
         """Test process_slices passing additional args and kwargs to function."""
-        from arraybridge.slice_processing import process_slices
-
         image_3d = np.array([[[1]], [[2]]])
 
         def func_with_args_kwargs(slice_2d, multiplier, offset=0):
@@ -84,8 +82,6 @@ class TestProcessSlices:
 
     def test_process_slices_empty_special_outputs(self):
         """Reject a tuple/non-tuple result boundary between slices."""
-
-        from arraybridge.slice_processing import process_slices
 
         image_3d = np.array([[[1]], [[2]]])
 
@@ -102,8 +98,6 @@ class TestProcessSlices:
     def test_process_slices_rejects_result_tuple_arity_drift(self):
         """Reject side-output cardinality changes between slices."""
 
-        from arraybridge.slice_processing import process_slices
-
         image_3d = np.array([[[1]], [[2]]])
 
         def drifting_func(slice_2d):
@@ -116,8 +110,6 @@ class TestProcessSlices:
 
     def test_process_slices_rejects_empty_result_tuple(self):
         """Reject a tuple that has no declared main output."""
-
-        from arraybridge.slice_processing import process_slices
 
         with pytest.raises(ValueError, match="cannot be empty"):
             process_slices(np.ones((1, 1, 1)), lambda _slice: (), (), {})
@@ -132,8 +124,6 @@ class TestProcessSlices:
     )
     def test_process_slices_different_shapes(self, shape):
         """Test process_slices with different 3D array shapes."""
-        from arraybridge.slice_processing import process_slices
-
         image_3d = np.random.rand(*shape)
 
         def identity_func(slice_2d):
@@ -143,3 +133,24 @@ class TestProcessSlices:
 
         # Should return the same array
         np.testing.assert_array_equal(result, image_3d)
+
+    @pytest.mark.parametrize(
+        ("device", "seen", "result_index"),
+        [(None, [0, 0], 0), (AcceleratorDevice(1), [1, 1], 1)],
+        ids=["device of the image", "given device"],
+    )
+    def test_process_slices_unstacks_on_the_device(self, device, seen, result_index, monkeypatch):
+        module = FakeCupy()
+        monkeypatch.setitem(sys.modules, "cupy", module)
+        image = FakeCupyArray(np.arange(8).reshape(2, 2, 2), 0, module)
+        slice_devices = []
+
+        def record_device(slice_2d):
+            slice_devices.append(slice_2d.device.id)
+            return slice_2d
+
+        result = process_slices(image, record_device, (), {}, device=device)
+
+        assert slice_devices == seen
+        assert result.device.id == result_index
+        np.testing.assert_array_equal(result.values, image.values)

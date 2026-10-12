@@ -9,7 +9,7 @@ python -m pip install -e ".[docs]"
 python -m sphinx -E -W --keep-going -b html docs/source docs/source/_build/html
 ```
 
-Narrative pages document public behavior and ownership. `api_reference.rst`
-tracks the root export surface. Keep code examples valid under
+The pages describe public behaviour. `api_reference.rst` lists the root
+exports, the device model and conversion reporting. Keep code examples valid under
 `scripts/validate_docs.py` in the OpenHCS superproject and verify signatures
 against `src/arraybridge/` when public APIs change.

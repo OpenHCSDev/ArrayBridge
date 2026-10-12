@@ -5,12 +5,11 @@ This module provides a single implementation of slice-by-slice processing
 that works for all memory types, eliminating duplication across dtype wrappers.
 """
 
-from arraybridge.converters import detect_memory_type
+from arraybridge.libraries import ArrayLibrary
 from arraybridge.stack_utils import stack_slices, unstack_slices
-from arraybridge.utils import _get_device_id
 
 
-def process_slices(image, func, args, kwargs, gpu_id=None):
+def process_slices(image, func, args, kwargs, device=None):
     """
     Process a 3D array slice-by-slice using the provided function.
 
@@ -26,21 +25,17 @@ def process_slices(image, func, args, kwargs, gpu_id=None):
         func: Function to apply to each slice
         args: Positional arguments to pass to func
         kwargs: Keyword arguments to pass to func
-        gpu_id: Optional GPU device ID override. If not provided, attempts
-            to derive from the input image and falls back to 0.
+        device: The device to unstack on. By default the device holding the image.
 
     Returns:
         Processed 3D array, or tuple of (processed_3d_array, special_outputs...)
         if func returns tuples
     """
-    # Detect memory type and use proper OpenHCS utilities
-    memory_type = detect_memory_type(image)
-    if gpu_id is None:
-        detected_gpu_id = _get_device_id(image, memory_type)
-        gpu_id = 0 if detected_gpu_id is None else detected_gpu_id
+    library = ArrayLibrary.of(image)
+    if device is None:
+        device = library.device_of(image)
 
-    # Unstack 3D array into 2D slices
-    slices_2d = unstack_slices(image, memory_type, gpu_id)
+    slices_2d = unstack_slices(image, library.name, device)
 
     # Process each slice and handle special outputs
     main_outputs = []
@@ -82,12 +77,11 @@ def process_slices(image, func, args, kwargs, gpu_id=None):
     # framework for the per-slice function.
     if not main_outputs:
         raise ValueError("Slice processing produced no main outputs to stack")
-    output_memory_type = detect_memory_type(main_outputs[0])
-    output_gpu_id = _get_device_id(main_outputs[0], output_memory_type)
+    output_library = ArrayLibrary.of(main_outputs[0])
     result = stack_slices(
         main_outputs,
-        output_memory_type,
-        0 if output_gpu_id is None else output_gpu_id,
+        output_library.name,
+        output_library.device_of(main_outputs[0]),
     )
 
     # If we have special outputs, combine them and return tuple

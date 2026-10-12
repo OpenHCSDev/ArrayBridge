@@ -1,36 +1,66 @@
 # arraybridge
 
-ArrayBridge provides explicit conversion and shared lifecycle utilities for
-NumPy, CuPy, PyTorch, TensorFlow, JAX, and pyclesperanto arrays.
+ArrayBridge converts arrays between NumPy, CuPy, PyTorch, TensorFlow, JAX and
+pyclesperanto, and gives code one way to ask each library about devices,
+memory and array operations.
 
-Core dependencies are NumPy and metaclass-registry. Other frameworks are
-optional.
+Core dependencies are NumPy and metaclass-registry. The other libraries are
+optional and are imported only when used.
+
+Version 0.5.0 removed names without aliases. [CHANGELOG.md](CHANGELOG.md)
+lists each removed name and what to call instead.
 
 ## Quick start
 
 ```python
 import numpy as np
 
-from arraybridge import convert_memory, detect_memory_type
+from arraybridge import HOST, convert_memory, detect_memory_type
 
 value = np.arange(6).reshape(2, 3)
 assert detect_memory_type(value) == "numpy"
 
-copy = convert_memory(
-    value,
-    source_type="numpy",
-    target_type="numpy",
-    gpu_id=0,
-)
+result = convert_memory(value, source_type="numpy", target_type="numpy", device=HOST)
+assert result is value
 ```
 
-`convert_memory` requires the declared source type, target type, and device id.
-The source and target `MemoryType` declarations perform conversion directly.
-The device id is required even for CPU conversions so call sites have one
-stable signature. A GPU target must declare that identifier as available;
-ArrayBridge does not silently place the value on the CPU.
+`convert_memory(data, source_type, target_type, device)` takes all four
+arguments. `device` is a device of the target library: `HOST` for main memory,
+`AcceleratorDevice(0)` for the library's first accelerator. A conversion to a
+device the target library does not have fails; nothing is placed somewhere
+else instead.
 
-## Declarative decorators
+## Devices
+
+A device is a value: `HOST` (main memory), `AcceleratorDevice(index)` (an
+accelerator as its library numbers it) or `NamedDevice(name)` (a device a
+library reports that is not one of its numbered accelerators, such as
+pyclesperanto on a CPU OpenCL device). Indices belong to one library; the same
+index in two libraries need not be the same hardware.
+
+| Target library | Devices it accepts |
+|---|---|
+| NumPy | `HOST` |
+| CuPy, pyclesperanto | `AcceleratorDevice(i)` |
+| PyTorch, JAX, TensorFlow | `HOST` or `AcceleratorDevice(i)` |
+
+Each library answers what it has on this machine:
+
+```python
+import numpy as np
+
+from arraybridge import HOST, AcceleratorDevice, ArrayLibrary
+
+numpy_library = ArrayLibrary.named("numpy")
+assert numpy_library.host_devices() == (HOST,)
+assert numpy_library.accelerator_devices() == ()
+assert numpy_library.available_devices() == (HOST,)
+assert numpy_library.device_of(np.zeros(3)) == HOST
+
+assert AcceleratorDevice(0).label == "accelerator:0"
+```
+
+## Decorators
 
 ```python
 from arraybridge import numpy
@@ -38,29 +68,113 @@ from arraybridge import numpy
 @numpy
 def normalize(image):
     return image / max(float(image.max()), 1.0)
+
+assert normalize.input_memory_type == "numpy"
 ```
 
-The framework decorators attach `input_memory_type`, `output_memory_type`, and
-`execution_memory_type` metadata, provide dtype/slice runtime parameters, and
-add framework-specific stream/OOM handling where supported. They do **not**
-convert inputs or outputs between frameworks and do not accept a `gpu_id`
-argument. A host runtime must call `convert_memory` at the boundary it plans and
-scope execution using the execution declaration.
+The decorator named after a library sets `input_memory_type`,
+`output_memory_type` and `execution_memory_type` on the function, adds the
+`slice_by_slice` and `dtype_config` keyword arguments, and wraps the call with
+what that library's devices need (per-thread CUDA streams for CuPy and
+PyTorch, out-of-memory retries for libraries with accelerators). It does not
+convert inputs or outputs between libraries and does not choose a device. The
+caller converts with `convert_memory`.
 
 ## Stack utilities
 
 ```python
 import numpy as np
 
-from arraybridge import stack_slices, unstack_slices
+from arraybridge import HOST, stack_slices, unstack_slices
 
 slices = [np.zeros((8, 8)), np.ones((8, 8))]
-stack = stack_slices(slices, memory_type="numpy", gpu_id=0)
-restored = unstack_slices(stack, memory_type="numpy", gpu_id=0)
+stack = stack_slices(slices, memory_type="numpy", device=HOST)
+restored = unstack_slices(stack, memory_type="numpy", device=HOST)
+assert stack.shape == (2, 8, 8) and len(restored) == 2
 ```
 
-`stack_slices` requires non-empty 2D inputs. `unstack_slices` requires a 3D
-array. Both validate shape and use explicit target memory/device declarations.
+`stack_slices` takes a non-empty list of 2D arrays. `unstack_slices` takes a
+3D array. Both raise `ValueError` for a wrong shape or a device the target
+library does not have.
+
+## Which route a conversion takes
+
+A conversion tries three mechanisms in order: `"device move"` (same library,
+other device), `"dlpack"` (the target wraps the source's buffer) and
+`"host copy"` (download to NumPy, then upload). `ConversionRoute.planned`
+tells which one will be tried first. It reads only the library classes and the
+device values, so it works without the libraries or the hardware:
+
+```python
+from arraybridge import HOST, AcceleratorDevice, ArrayLibrary, ConversionRoute
+
+torch = ArrayLibrary.named("torch")
+cupy = ArrayLibrary.named("cupy")
+gpu = AcceleratorDevice(0)
+
+assert ConversionRoute.planned(torch, gpu, cupy, gpu).mechanism == "dlpack"
+assert ConversionRoute.planned(torch, HOST, cupy, gpu).mechanism == "host copy"
+assert ConversionRoute.planned(torch, HOST, torch, gpu).mechanism == "device move"
+```
+
+To see what conversions actually ran, install a `ConversionCounters` observer.
+It keeps a count, bytes and seconds per source, target and mechanism. This
+example needs JAX:
+
+```python
+import numpy as np
+
+from arraybridge import HOST, ConversionCounters, convert_memory
+
+counters = ConversionCounters()
+with counters.installed():
+    convert_memory(np.zeros((4, 4), dtype=np.float32), "numpy", "jax", HOST)
+
+row = counters.rows()[0]
+assert (row["source_library"], row["target_library"]) == ("numpy", "jax")
+assert (row["mechanism"], row["count"], row["nbytes"]) == ("host copy", 1, 64)
+print(counters.format_table())
+```
+
+A call that returns its input unchanged is not counted. With no observer
+installed nothing is timed.
+
+## Array operations in the array's own library
+
+`ArrayLibrary.named("torch")`, `ArrayLibrary.of(array)` and
+`MemoryType.TORCH.library` all return the library object. Its methods run in
+that library, on the device of their input: `max`, `min`, `mean`, `sum`,
+`astype`, `reshape`, `broadcast_to`, `ones_like`, `ones`, `prepend_axis`,
+`linspace`, `assign`, `outer`, `floor`, `logical_and`, `stack_arrays`,
+`normalize_planes`, `scale_dtype`, `to_numpy`, `from_numpy`.
+
+```python
+import numpy as np
+
+from arraybridge import ArrayLibrary
+
+
+def max_projection(stack):
+    library = ArrayLibrary.of(stack)
+    return library.prepend_axis(library.max(stack, 0))
+
+
+assert max_projection(np.ones((4, 8, 8))).shape == (1, 8, 8)
+```
+
+`library.module` is the library's module, imported on first use. Each library
+keeps its own numeric rules: PyTorch, JAX and TensorFlow take means in
+float32, and pyclesperanto reduces only along the leading axis.
+
+`reshape`, `broadcast_to` and `ones_like` do not download pixels to NumPy.
+pyclesperanto cannot change shape or broadcast natively, so those calls raise
+`NotImplementedError` unless the shape is unchanged; its `ones_like` supports
+one to three dimensions and its float32 and integer dtypes, not bool.
+
+## Adding a library
+
+A library is one class. See
+[ADDING_NEW_FRAMEWORKS.md](ADDING_NEW_FRAMEWORKS.md).
 
 ## Installation
 
@@ -71,41 +185,3 @@ pip install "arraybridge[cupy]"
 ```
 
 Documentation: <https://arraybridge.readthedocs.io>
-
-### Native array geometry
-
-`MemoryType.reshape(array, shape)` and `MemoryType.broadcast_to(array, shape)`
-operate in the array's framework and device. `MemoryType.ones_like(reference,
-shape=..., dtype=...)` allocates on the reference's device; omitting `shape`
-retains its shape. Reshape and broadcast preserve views where the backend can
-represent them. Broadcasting is not a promise of a writable, independent buffer.
-
-These operations never silently project pixels to NumPy. Pyclesperanto cannot
-provide native changed-shape reshape or broadcasting, so those requests raise
-`NotImplementedError`. Its native ones allocation supports one to three
-dimensions and its supported integer/float32 dtypes; boolean allocation is
-explicitly unsupported. Existing conversion and disk boundaries remain separate.
-
-### Writing an operation once for every framework
-
-`ArrayOperations.for_memory(memory_type)` returns that framework's operations
-leaf: one registered subclass per `MemoryType`, holding only the primitives its
-library does differently (`max`, `min`, `mean`, `sum`, `astype`,
-`prepend_axis`, `linspace`, `ones`, `assign`, `outer`, `floor`, `accepts`).
-Code written against the leaf runs natively in each framework:
-
-```python
-from arraybridge import MemoryType
-from arraybridge.array_operations import ArrayOperations
-
-
-def max_projection(ops, stack):
-    return ops.prepend_axis(ops.max(stack, 0))
-
-
-ops = ArrayOperations.for_memory(MemoryType.TORCH)
-```
-
-`ops.module` is the framework, imported on first use. Each leaf keeps its
-library's numeric rules: torch, JAX and TensorFlow take means in float32, and
-pyclesperanto reduces only along the leading axis.

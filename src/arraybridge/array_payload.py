@@ -2,7 +2,9 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import TypeVar
+
+from arraybridge.arrays import Array
 
 ArrayPayloadT = TypeVar("ArrayPayloadT", bound="ArrayPayload")
 
@@ -11,16 +13,16 @@ class ArrayPayload(ABC):
     """Container whose array data can be transformed without losing its context."""
 
     @abstractmethod
-    def array_payload_data(self) -> Any:
+    def array_payload_data(self) -> Array:
         """Return the concrete array governed by this payload."""
 
     @abstractmethod
-    def with_data(self: ArrayPayloadT, data: Any) -> ArrayPayloadT:
+    def with_data(self: ArrayPayloadT, data: Array) -> ArrayPayloadT:
         """Return this payload's context attached to replacement array data."""
 
     def map_array_payload(
         self: ArrayPayloadT,
-        transform: Callable[[Any], Any],
+        transform: Callable[[Array], Array],
     ) -> ArrayPayloadT:
         """Apply one array transform while preserving the payload container."""
 
