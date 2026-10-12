@@ -403,7 +403,6 @@ GitHub Actions will automatically:
 2. **Start small**: Begin with MVP, iterate based on feedback
 3. **Document**: Add docstrings, update README/docs
 4. **Test thoroughly**: Include unit, integration, and edge case tests
-5. **Maintain compatibility**: Avoid breaking changes when possible
 
 ### Adding Library Support
 
