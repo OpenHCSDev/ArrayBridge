@@ -13,6 +13,7 @@ from arraybridge.devices import HOST, AcceleratorDevice, Device, HostDevice, Nam
 from arraybridge.libraries import ArrayLibrary, HostDevices
 from tests.fakes import (
     FakeCupy,
+    FakeCupyArray,
     FakePyclesperanto,
     FakePyclesperantoArray,
     FakeTorch,
@@ -262,3 +263,39 @@ class TestCudaStreams:
 
         assert ArrayLibrary.named("cupy").current_device() == AcceleratorDevice(1)
         assert TORCH.current_device() is None
+
+
+class TestArraysInLists:
+    @staticmethod
+    def seen_device(monkeypatch, *arguments):
+        module = FakeCupy()
+        monkeypatch.setitem(sys.modules, "cupy", module)
+        cupy = ArrayLibrary.named("cupy")
+        wrapped = cupy.execution_wrapper(lambda *_: None, oom_recovery=True)
+        wrapped(*[argument(module) for argument in arguments])
+        streams = [stream for event, stream in module.events if event == "stream enter"]
+        return [stream.device_index for stream in streams]
+
+    def test_a_list_of_arrays_runs_on_their_device(self, monkeypatch):
+        def arrays(module):
+            return [FakeCupyArray(np.zeros(2), 1, module), FakeCupyArray(np.zeros(2), 1, module)]
+
+        assert self.seen_device(monkeypatch, arrays) == [1]
+
+    def test_a_tuple_of_arrays_runs_on_their_device(self, monkeypatch):
+        assert self.seen_device(monkeypatch, lambda m: (FakeCupyArray(np.zeros(2), 1, m),)) == [1]
+
+    def test_only_one_level_is_searched(self, monkeypatch):
+        module = FakeCupy()
+        monkeypatch.setitem(sys.modules, "cupy", module)
+        cupy = ArrayLibrary.named("cupy")
+        nested = [[FakeCupyArray(np.zeros(2), 1, module)]]
+
+        assert cupy._argument_device((nested,)) is None
+
+    def test_arrays_on_different_devices_name_them(self, monkeypatch):
+        def arrays(module):
+            return [FakeCupyArray(np.zeros(2), 0, module), FakeCupyArray(np.zeros(2), 1, module)]
+
+        with pytest.raises(ValueError, match="accelerator:0.*accelerator:1"):
+            self.seen_device(monkeypatch, arrays)

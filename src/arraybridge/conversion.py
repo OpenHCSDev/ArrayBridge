@@ -22,7 +22,7 @@ from abc import ABC, ABCMeta, abstractmethod
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from types import NotImplementedType
 from typing import TYPE_CHECKING, ClassVar, TypeGuard, TypeVar
 
@@ -454,7 +454,17 @@ _observer: ContextVar[ConversionObserver] = ContextVar(
     "arraybridge conversion observer", default=IgnoreConversions()
 )
 
-ConversionKey = tuple[str, str, str, str, str]
+# A conversion kind is identified by every field of the record except its measurements.
+_MEASUREMENTS = frozenset({"nbytes", "seconds"})
+_IDENTITY_FIELDS = tuple(
+    each.name for each in fields(ConversionRecord) if each.name not in _MEASUREMENTS
+)
+ConversionKey = tuple[str | tuple[str, ...], ...]
+JsonRow = dict[str, str | int | float | list[str]]
+
+
+def _key_of(record: ConversionRecord) -> ConversionKey:
+    return tuple(getattr(record, name) for name in _IDENTITY_FIELDS)
 
 
 @dataclass(slots=True)
@@ -468,27 +478,18 @@ class ConversionTotal:
 
 @dataclass(slots=True)
 class ConversionCounters(ConversionObserver):
-    """Per-process totals keyed by source, target and mechanism.
+    """Per-process totals keyed by what identifies a conversion.
 
-    Counters from worker processes are plain data: pickle them or send
-    ``to_json()`` back, then ``merge`` them into the parent's.
+    The key is every field of ``ConversionRecord`` but ``nbytes`` and
+    ``seconds``: the libraries and devices, the mechanism and the declined
+    mechanisms. Counters from worker processes are plain data: pickle them or
+    send ``to_json()`` back, then ``merge`` them into the parent's.
     """
 
     totals: dict[ConversionKey, ConversionTotal] = field(default_factory=dict)
 
     def record(self, record: ConversionRecord) -> None:
-        self._add(
-            (
-                record.source_library,
-                record.source_device,
-                record.target_library,
-                record.target_device,
-                record.mechanism,
-            ),
-            1,
-            record.nbytes,
-            record.seconds,
-        )
+        self._add(_key_of(record), 1, record.nbytes, record.seconds)
 
     def _add(self, key: ConversionKey, count: int, nbytes: int, seconds: float) -> None:
         total = self.totals.setdefault(key, ConversionTotal())
@@ -503,42 +504,37 @@ class ConversionCounters(ConversionObserver):
             self._add(key, total.count, total.nbytes, total.seconds)
         return self
 
-    def rows(self) -> list[dict[str, str | int | float]]:
+    def _largest_first(self) -> list[tuple[ConversionKey, ConversionTotal]]:
+        return sorted(self.totals.items(), key=lambda item: (-item[1].nbytes, item[0]))
+
+    def rows(self) -> list[JsonRow]:
         """One JSON-ready row per kind of conversion, largest byte total first."""
 
         return [
             {
-                "source_library": key[0],
-                "source_device": key[1],
-                "target_library": key[2],
-                "target_device": key[3],
-                "mechanism": key[4],
+                **{
+                    name: list(part) if isinstance(part, tuple) else part
+                    for name, part in zip(_IDENTITY_FIELDS, key, strict=True)
+                },
                 "count": total.count,
                 "nbytes": total.nbytes,
                 "seconds": total.seconds,
             }
-            for key, total in sorted(
-                self.totals.items(), key=lambda item: (-item[1].nbytes, item[0])
-            )
+            for key, total in self._largest_first()
         ]
 
     to_json = rows
 
     @classmethod
-    def from_json(cls, rows: list[dict[str, str | int | float]]) -> ConversionCounters:
+    def from_json(cls, rows: list[JsonRow]) -> ConversionCounters:
         counters = cls()
         for row in rows:
+            key = tuple(
+                tuple(map(str, part)) if isinstance(part, list) else str(part)
+                for part in (row[name] for name in _IDENTITY_FIELDS)
+            )
             counters._add(
-                (
-                    str(row["source_library"]),
-                    str(row["source_device"]),
-                    str(row["target_library"]),
-                    str(row["target_device"]),
-                    str(row["mechanism"]),
-                ),
-                int(row["count"]),
-                int(row["nbytes"]),
-                float(row["seconds"]),
+                key, int(str(row["count"])), int(str(row["nbytes"])), float(str(row["seconds"]))
             )
         return counters
 
@@ -546,12 +542,18 @@ class ConversionCounters(ConversionObserver):
         """The totals as aligned text, one line per kind of conversion."""
 
         lines = [
-            f"{'source':<28} {'target':<28} {'mechanism':<12} "
-            f"{'count':>7} {'MB':>10} {'seconds':>9}"
+            f"{'source':<28} {'target':<28} {'mechanism':<20} "
+            f"{'count':>7} {'MB':>10} {'seconds':>9}  declined"
         ]
-        for key, total in sorted(self.totals.items(), key=lambda item: (-item[1].nbytes, item[0])):
+        for key, total in self._largest_first():
+            row = dict(zip(_IDENTITY_FIELDS, key, strict=True))
+            declined = row["declined_mechanisms"]
+            assert isinstance(declined, tuple)
             lines.append(
-                f"{key[0] + ' ' + key[1]:<28} {key[2] + ' ' + key[3]:<28} {key[4]:<12} "
-                f"{total.count:>7} {total.nbytes / 1e6:>10.1f} {total.seconds:>9.3f}"
+                f"{row['source_library']} {row['source_device']}".ljust(29)
+                + f"{row['target_library']} {row['target_device']}".ljust(29)
+                + f"{row['mechanism']!s:<20} "
+                + f"{total.count:>7} {total.nbytes / 1e6:>10.1f} {total.seconds:>9.3f}  "
+                + ", ".join(declined)
             )
         return "\n".join(lines)
