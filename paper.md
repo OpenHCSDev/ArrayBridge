@@ -19,10 +19,9 @@ bibliography: paper.bib
 
 # Summary
 
-`arraybridge` provides unified array conversion between NumPy, CuPy, PyTorch, TensorFlow, JAX, and pyclesperanto. A microscopy image analysis pipeline might use CuPy for Gaussian filtering, PyTorch for neural network segmentation, and pyclesperanto for morphological operations—each with different array types, device APIs, and memory management. Without arraybridge, this requires learning six different conversion syntaxes:
+`arraybridge` converts arrays between NumPy [@numpy], CuPy [@cupy], PyTorch [@pytorch], TensorFlow [@tensorflow], JAX [@jax], and pyclesperanto [@pyclesperanto], and wraps functions written for one of them with what that library's devices need. A microscopy pipeline might use CuPy for filtering, PyTorch for segmentation, and pyclesperanto for morphology. Each has its own array type, device API, and memory management, and its own way back to NumPy:
 
 ```python
-# Manual conversion nightmare
 cupy_to_numpy = data.get()
 torch_to_numpy = data.cpu().numpy()
 jax_to_numpy = np.asarray(data)
@@ -30,50 +29,68 @@ tensorflow_to_numpy = data.numpy()
 pyclesperanto_to_numpy = cle.pull(data)
 ```
 
-With arraybridge, users declare their function's memory type via decorators:
+With arraybridge one call converts between any two registered libraries, and the caller can ask beforehand which mechanism will be tried and afterwards which one was used:
 
 ```python
-@cupy
-def sobel_2d(image):
-    """Edge detection on GPU with automatic OOM recovery."""
-    return cp.gradient(image)
+from arraybridge import AcceleratorDevice, ArrayLibrary, ConversionCounters, ConversionRoute
+
+cupy_library, torch_library = ArrayLibrary.named("cupy"), ArrayLibrary.named("torch")
+gpu = AcceleratorDevice(0)
+
+ConversionRoute.planned(cupy_library, gpu, torch_library, gpu).mechanism  # "dlpack"
+
+counters = ConversionCounters()
+with counters.installed():
+    tensor = cupy_library.convert_to(cupy_array, torch_library, gpu)
+print(counters.format_table())
 ```
 
-The decorator handles DLPack zero-copy transfers when available, falls back to NumPy bridging otherwise, manages per-thread CUDA streams for safe parallelization, detects and recovers from GPU out-of-memory errors, and preserves dtypes through conversions.
+A function is declared as belonging to a library with the decorator of that library's name:
+
+```python
+import cupy as cp
+from arraybridge import cupy
+
+@cupy
+def horizontal_edges(image):
+    return cp.abs(cp.gradient(image, axis=-1))
+```
+
+The decorator records the function's input and output library for a pipeline runtime to read, runs a call on a CUDA device inside a per-thread stream, retries after a GPU out-of-memory error, and converts the output back to the input dtype. It does not convert the arguments; conversion is the explicit call above.
 
 # Statement of Need
 
-GPU-accelerated scientific computing increasingly requires mixing frameworks. PyTorch dominates deep learning, CuPy provides NumPy-compatible GPU arrays, JAX offers automatic differentiation with XLA compilation, pyclesperanto provides GPU image processing primitives, and TensorFlow remains common in production deployments. A single pipeline may use three or four of these.
+GPU-accelerated scientific computing increasingly mixes frameworks: PyTorch for deep learning, CuPy for NumPy-compatible GPU arrays, JAX for automatic differentiation, pyclesperanto for GPU image processing. A single pipeline may use three or four of these.
 
-The problem is not just syntax—each framework has different:
+The problem is not only syntax. Each framework has different:
 
 - **Device management**: CuPy uses `cuda.Device(id)`, PyTorch uses `tensor.cuda(id)`, JAX uses `device_put(data, devices()[id])`
 - **OOM exceptions**: CuPy raises `cuda.memory.OutOfMemoryError`, PyTorch raises `torch.cuda.OutOfMemoryError`, TensorFlow raises `errors.ResourceExhaustedError`
-- **Cache clearing**: CuPy requires `get_default_memory_pool().free_all_blocks()`, PyTorch requires `cuda.empty_cache()`, TensorFlow has no explicit cache API
-- **Stream management**: CuPy and PyTorch support CUDA streams; TensorFlow and JAX manage streams internally
+- **Cache clearing**: CuPy requires `get_default_memory_pool().free_all_blocks()`, PyTorch requires `cuda.empty_cache()`
+- **Stream management**: CuPy and PyTorch expose CUDA streams; TensorFlow and JAX manage streams internally
 
-Writing correct multi-framework code requires understanding all these differences. `arraybridge` consolidates this knowledge into a single declarative configuration, generating 36 conversion methods (6 frameworks × 6 target types) from ~450 lines of configuration rather than hand-written code for each path.
+Code that mixes frameworks restates these differences at each call site and cannot tell afterwards whether a conversion wrapped a buffer or copied it. `arraybridge` states each library's behaviour once, in one class per library, and derives the rest from those classes: the lookup by name or by array, the decorators, the `MemoryType` enumeration, and the conversion between every pair of libraries and devices.
 
 | Feature | DLPack | Framework utils | arraybridge |
 |---------|:------:|:---------------:|:-----------:|
 | Zero-copy transfer | ✓ | — | ✓ |
-| OOM recovery | — | — | ✓ |
-| Thread-local streams | — | — | ✓ |
-| Dtype preservation | — | — | ✓ |
-| Unified API (36 paths) | — | — | ✓ |
-| Automatic fallback | — | — | ✓ |
+| One call for every library pair | — | — | ✓ |
+| Record of the mechanism used | — | — | ✓ |
+| OOM detection and retry | — | — | ✓ |
+| Per-thread CUDA streams | — | — | ✓ |
+| Output dtype restored | — | — | ✓ |
 
 # State of the Field
 
-**DLPack** [@dlpack] provides a zero-copy tensor sharing protocol adopted by all major frameworks. However, DLPack handles only the data transfer—users must still detect framework types, handle fallbacks when DLPack fails, manage device placement, and deal with framework-specific exceptions.
+**DLPack** [@dlpack] provides a zero-copy tensor sharing protocol adopted by all major frameworks. It handles only the data transfer. Users must still detect framework types, handle a capsule the importer cannot read, manage device placement, and deal with framework-specific exceptions.
 
 **The Python Array API Standard** [@arrayapi] defines common operations (`mean()`, `sum()`, `reshape()`) across frameworks but does not address conversion between frameworks or GPU memory management.
 
-**Framework-specific utilities** (`torch.from_numpy()`, `cupy.asarray()`) handle only their own framework pairs. They provide no OOM recovery, no stream management, and no dtype preservation guarantees.
+**Framework-specific utilities** (`torch.from_numpy()`, `cupy.asarray()`) handle only their own framework pairs. They provide no OOM retry, no stream management, and no report of whether data was shared or copied.
 
 # Software Design
 
-The architecture uses data-driven metaprogramming. All framework-specific behavior is declared in one `ArrayLibrary` subclass per framework (abridged):
+**One class per library.** `ArrayLibrary` is an abstract family registered by `AutoRegisterMeta` from `metaclass-registry` [@metaclassregistry]. A library is a subclass that states its name and inherits the roles it plays (abridged from the source):
 
 ```python
 class CupyLibrary(CudaLibrary, DLPackImport, DLPackProtocolExport,
@@ -87,71 +104,32 @@ class CupyLibrary(CudaLibrary, DLPackImport, DLPackProtocolExport,
     def _to_host(self, data):
         return data.get()
 
-    def _upload(self, data, device):
-        return self.module.array(data)
-
-    def _import_dlpack(self, payload):
-        return self.module.from_dlpack(payload.source)
-
     def _free_cached_memory(self):
         self.module.get_default_memory_pool().free_all_blocks()
-
-# Similar classes for TORCH, TENSORFLOW, JAX, PYCLESPERANTO, NUMPY
 ```
 
-At import time, the library classes are registered via `AutoRegisterMeta` from the `metaclass-registry` library [@metaclassregistry]. Each library implements `to_numpy()`, `from_numpy()`, `from_dlpack()`, and `convert_to()` for all target frameworks. Adding a seventh framework requires only adding its `ArrayLibrary` subclass—no new code paths.
+The role parents carry the behaviour: `CudaLibrary` adds streams and cache release, `DLPackImport` and `DLPackProtocolExport` say which side of a DLPack exchange a library can take, and `NumpyBufferSharing` says that a host array can be the same buffer as a NumPy array. Adding a seventh library is one subclass; no other file is edited. Devices are values (`HOST`, `AcceleratorDevice(0)`), not strings or integers.
 
-**Thread-local GPU streams** are managed via `threading.local()`. Without this, multiple threads sharing a GPU would serialize on the default stream or corrupt each other's operations. With per-thread streams, true parallel GPU execution is possible:
+**Conversion routes.** How an array gets from one library and device to another is an ordered family of `ConversionRoute` subclasses: `"stays in place"`, `"device move"`, `"dlpack"`, `"shared host buffer"`, and `"host copy"`. Each route has one predicate, `applies`, that reads only the two library classes and the two devices. `ConversionRoute.planned` returns the first route whose predicate holds, and `ConversionRoute.run` tries the routes selected by the same predicate in the same order, so the plan and the conversion cannot disagree, and a plan can be made on a machine without the device. A plan cannot see the array. When a route cannot carry a particular array (a capsule the importer cannot read, a NumPy buffer the target has to copy), the next route runs, and the `ConversionRecord` names the mechanism that was used and lists the declined ones. `ConversionCounters` totals count, bytes, and seconds per source, target, and mechanism.
 
-```python
-@torch
-def segment_image(image):
-    return model(image)  # Runs on thread-local stream
-```
+**Per-thread GPU streams.** For CuPy and PyTorch, a decorated call whose arguments are on CUDA device N runs inside that thread's stream for device N, created on first use and kept in `threading.local()`. A call on host arrays runs as written and does not initialise CUDA.
 
-**OOM recovery** (enabled by default) unifies detection across frameworks. The library checks both exception types and error string patterns (e.g., "out of memory", "resource_exhausted"), clears framework-specific caches, and retries:
+**OOM retry** (enabled by default for calls that run on an accelerator). Each library declares its out-of-memory exception types and message fragments (for example "out of memory", "resource_exhausted"). On a match the wrapper frees the library's cached memory on that device (CuPy and PyTorch; the other libraries declare no cache to free), collects garbage, and calls the function again. The retry runs on the same device. After two failed retries the error is raised to the caller; there is no fallback to the CPU.
 
-```python
-def run_with_oom_recovery(self, func, max_retries=2, device=None):
-    attempt = 0
-    while True:
-        try:
-            return func()
-        except Exception as error:
-            if not self.is_oom_error(error) or attempt == max_retries:
-                raise
-        attempt += 1
-        self.cleanup_loaded(device)
-        gc.collect()
-```
-
-This is critical for microscopy pipelines where image sizes are unpredictable. A 4K image might fit in GPU memory, but a 16K image might not. With OOM recovery, the pipeline automatically falls back to CPU processing without user intervention.
-
-**Dtype preservation** handles the common case where GPU operations produce float32 output from integer input. Microscopy data is typically uint16 (16-bit unsigned integers). When a Gaussian filter produces float32 output, arraybridge automatically scales and clamps back to uint16 without overflow:
-
-```python
-# Input: uint16 image with values 0-65535
-# Gaussian filter produces float32 with values 0.0-65535.0
-# arraybridge scales back to uint16 automatically
-result = gaussian_filter(image)  # Still uint16
-```
-
-Each library's `scale_dtype` method applies framework-specific scaling and clamping to convert back to the original dtype without overflow. This preserves the user's mental model—they think in terms of their original data type, not the intermediate float32 representation.
+**Output dtype.** Microscopy data is typically uint16, and many GPU operations return floating point. By default a decorated function's output is converted back to the dtype of its first argument. When a floating-point result goes to an integer dtype, each library's `scale_dtype` maps the result's minimum and maximum onto the full range of that dtype, clamps, and casts, so a uint16 input yields a uint16 output without overflow, with intensities stretched to 0 to 65535 rather than rounded in place.
 
 # Research Impact Statement
 
-`arraybridge` is a core component of OpenHCS, an open-source platform for high-content screening microscopy. In OpenHCS pipelines:
+`arraybridge` is used by OpenHCS, an open-source platform for high-content screening microscopy. In OpenHCS pipelines:
 
 - **GPU-accelerated stitching** uses CuPy for phase correlation
-- **Flatfield correction** uses CuPy with OOM recovery and automatic fallback to CPU
-- **Edge detection** uses CuPy with dtype preservation to maintain uint16 microscopy data
-- **Deep learning segmentation** integrates PyTorch models via the `@torch` decorator
-
-The thread-local stream management is critical for high-throughput screening where thousands of images must be processed per experiment. Multiple worker threads can process different images on the same GPU without coordination overhead.
+- **Flatfield correction** uses CuPy with OOM retry
+- **Edge detection** uses CuPy with the output returned in the input's uint16
+- **Deep learning denoising** declares PyTorch functions with the `torch` decorator
 
 # AI Usage Disclosure
 
-Generative AI (Claude) assisted with code generation and documentation. All content was reviewed and tested. Core architectural decisions—data-driven configuration, metaclass registration, DLPack-first conversion with fallback, thread-local streams—were human-designed based on multi-framework interoperability requirements.
+Generative AI (Claude) assisted with code generation and documentation. All content was reviewed and tested. Core architectural decisions (one class per library, metaclass registration, DLPack-first conversion with a recorded fallback, per-thread streams) were human-designed based on multi-framework interoperability requirements.
 
 # Acknowledgements
 
