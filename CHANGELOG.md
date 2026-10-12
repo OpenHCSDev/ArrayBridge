@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.2
+
+### Counters keep declined routes
+
+`ConversionCounters` keyed its totals by source, target and mechanism, so two
+conversions that declined different routes were merged and `declined_mechanisms`
+was lost in `rows`, `merge`, `to_json`/`from_json` and `format_table`. The key is
+now derived in one place from every `ConversionRecord` field except `nbytes` and
+`seconds`, so a field added to the record cannot fall out of the counters. Rows
+gain `declined_mechanisms` (a list); `format_table` shows it in a last column.
+
+### A library is not loaded while another thread is importing it
+
+`ArrayLibrary.loaded_module()` answers `None` for a module whose
+`__spec__._initializing` is true, so `module` goes through
+`importlib.import_module`, which waits on the module lock. Two threads first
+using a library together no longer see `partially initialized module`.
+
+### A list of accelerator arrays gets its stream and OOM retry
+
+The device of a call is read from direct array arguments and from the items of
+list and tuple arguments (one level, no deeper). Arrays of one library on
+different devices in one call now raise `ValueError` naming the devices.
+
 ## 0.5.1
 
 ### No library inherits an operation it cannot perform

@@ -204,7 +204,7 @@ plan, says what was done to that array.
 
 ``ConversionCounters``
   An observer that keeps count, bytes and seconds per source library and
-  device, target library and device, and mechanism. ``rows()`` (also named
+  device, target library and device, mechanism and declined mechanisms. ``rows()`` (also named
   ``to_json()``) returns one row per kind, largest byte total first;
   ``from_json(rows)`` rebuilds counters; ``merge(other)`` adds another
   process's totals; ``format_table()`` returns aligned text.

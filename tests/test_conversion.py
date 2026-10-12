@@ -757,6 +757,7 @@ class TestCounters:
                 "target_library": "torch",
                 "target_device": "accelerator:0",
                 "mechanism": "host copy",
+                "declined_mechanisms": [],
                 "count": 2,
                 "nbytes": 40,
                 "seconds": 0.5,
@@ -767,6 +768,7 @@ class TestCounters:
                 "target_library": "torch",
                 "target_device": "accelerator:0",
                 "mechanism": "dlpack",
+                "declined_mechanisms": [],
                 "count": 1,
                 "nbytes": 10,
                 "seconds": 0.25,
@@ -809,7 +811,15 @@ class TestCounters:
 
         header, *lines = counters.format_table().splitlines()
 
-        assert header.split() == ["source", "target", "mechanism", "count", "MB", "seconds"]
+        assert header.split() == [
+            "source",
+            "target",
+            "mechanism",
+            "count",
+            "MB",
+            "seconds",
+            "declined",
+        ]
         assert len(lines) == len(counters.rows())
         for line, row in zip(lines, counters.rows(), strict=True):
             for field in ("source_library", "source_device", "target_library", "target_device"):
@@ -818,3 +828,40 @@ class TestCounters:
             assert f"{row['count']:>7}" in line
             assert f"{row['nbytes'] / 1e6:.1f}" in line
             assert f"{row['seconds']:.3f}" in line
+
+
+class TestCounterKey:
+    def test_every_field_but_the_measurements_identifies_a_kind(self):
+        import dataclasses
+
+        base = ConversionRecord("numpy", "host", "torch", "accelerator:0", "host copy", 1, 1.0)
+        values = {
+            "source_library": "cupy",
+            "source_device": "accelerator:1",
+            "target_library": "jax",
+            "target_device": "host",
+            "mechanism": "dlpack",
+            "declined_mechanisms": ("dlpack",),
+        }
+        for each in dataclasses.fields(ConversionRecord):
+            if each.name in ("nbytes", "seconds"):
+                continue
+            other = dataclasses.replace(base, **{each.name: values[each.name]})
+            counters = ConversionCounters()
+            counters.record(base)
+            counters.record(other)
+            assert len(counters.totals) == 2, each.name
+            assert ConversionCounters.from_json(counters.to_json()) == counters, each.name
+            assert pickle.loads(pickle.dumps(counters)) == counters, each.name
+            assert ConversionCounters().merge(counters) == counters, each.name
+
+    def test_declined_routes_are_shown_and_survive_json(self):
+        counters = ConversionCounters()
+        counters.record(
+            ConversionRecord("numpy", "host", "torch", "host", "host copy", 5, 1.0, ("dlpack",))
+        )
+        rows = json.loads(json.dumps(counters.to_json()))
+
+        assert rows[0]["declined_mechanisms"] == ["dlpack"]
+        assert ConversionCounters.from_json(rows) == counters
+        assert "dlpack" in counters.format_table().splitlines()[1]

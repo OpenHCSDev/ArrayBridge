@@ -370,9 +370,17 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
             os.environ.setdefault(name, value)
 
     def loaded_module(self) -> ModuleType | None:
-        """The library's module if something already imported it."""
+        """The library's module if something has finished importing it.
 
-        return sys.modules.get(self.import_name)
+        A module another thread is still executing is not loaded yet: it is
+        answered ``None``, and ``import_module`` waits for it.
+        """
+
+        module = sys.modules.get(self.import_name)
+        spec = getattr(module, "__spec__", None)
+        if spec is not None and getattr(spec, "_initializing", False):
+            return None
+        return module
 
     def import_module(self) -> ModuleType:
         """Import the library's module."""
@@ -895,15 +903,28 @@ class AcceleratorDevices(ArrayLibrary[NativeT]):
         """Create a native array on ``device``; called inside that device's scope."""
 
     def _argument_device(self, arguments: Sequence[object]) -> Device | None:
-        """The device of the first array of this library among a call's arguments."""
+        """The one device holding the arrays of this library among a call's arguments.
+
+        An array is an argument itself or an item of an argument that is a list
+        or a tuple; nothing deeper is searched. Arrays on different devices in
+        one call raise ``ValueError`` naming the devices.
+        """
 
         if self.loaded_module() is None:
             return None
-        for value in arguments:
-            device = self._device_if_accepted(value)
-            if device is not None:
-                return device
-        return None
+        devices: dict[str, Device] = {}
+        for argument in arguments:
+            items = argument if isinstance(argument, (list, tuple)) else (argument,)
+            for value in items:
+                device = self._device_if_accepted(value)
+                if device is not None:
+                    devices.setdefault(device.label, device)
+        if len(devices) > 1:
+            raise ValueError(
+                f"The arrays of one {self.display_name} call are on different devices: "
+                + ", ".join(sorted(devices))
+            )
+        return next(iter(devices.values()), None)
 
     @abstractmethod
     def _device_if_accepted(self, value: object) -> Device | None:

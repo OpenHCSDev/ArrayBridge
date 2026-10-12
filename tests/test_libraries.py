@@ -228,9 +228,7 @@ class TestOutOfMemory:
             raise MemoryError("out of memory")
 
         with pytest.raises(MemoryError, match="out of memory"):
-            ArrayLibrary.named("torch").run_with_oom_recovery(
-                always_fails, max_retries=max_retries
-            )
+            ArrayLibrary.named("torch").run_with_oom_recovery(always_fails, max_retries=max_retries)
         assert len(calls) == expected_calls
 
     def test_other_errors_are_not_retried(self):
@@ -517,3 +515,47 @@ class TestOperations:
             np.testing.assert_array_equal(host_array, values)
         assert torch.device_of(on_host) == HOST
         assert torch.device_of(on_accelerator) == AcceleratorDevice(0)
+
+
+class TestImportRace:
+    def test_a_module_still_importing_is_waited_for(self, monkeypatch):
+        import importlib.abc
+        import importlib.util
+        import time
+        from threading import Barrier, Thread
+
+        class SlowLoader(importlib.abc.Loader):
+            def create_module(self, spec):
+                return None
+
+            def exec_module(self, module):
+                time.sleep(0.01)
+                module.ready = True
+
+        class SlowFinder(importlib.abc.MetaPathFinder):
+            def find_spec(self, name, path=None, target=None):
+                if name == "slow_fake_library":
+                    return importlib.util.spec_from_loader(name, SlowLoader())
+                return None
+
+        finder = SlowFinder()
+        monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+        library = ArrayLibrary.named("numpy")
+        monkeypatch.setattr(library, "import_name", "slow_fake_library")
+        monkeypatch.setattr(library, "prepare_import", lambda: None)
+
+        for _ in range(50):
+            sys.modules.pop("slow_fake_library", None)
+            seen = []
+            barrier = Barrier(2)
+
+            def use():
+                barrier.wait()
+                seen.append(hasattr(library.module, "ready"))
+
+            threads = [Thread(target=use) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            assert seen == [True, True]
