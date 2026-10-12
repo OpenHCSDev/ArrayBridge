@@ -8,31 +8,33 @@ These decorators annotate functions with input_memory_type and output_memory_typ
 attributes and provide automatic thread-local CUDA stream management for GPU
 frameworks to enable true parallelization across multiple threads.
 
-Framework-specific runtime capabilities are delegated to ``MemoryType`` members.
+What a library needs around a call (streams, out-of-memory retries) comes from
+its ``ArrayLibrary`` class. The decorator named after a library (``numpy``,
+``torch``, ...) is made on first access for any registered library.
 """
 
 import functools
 import inspect
 import logging
-import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, ClassVar, TypeVar, cast
+from typing import ClassVar, ParamSpec, TypeVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 from python_introspect import RuntimeParameterDeclarationABC
 
 from arraybridge.array_payload import ArrayPayload
-from arraybridge.oom_recovery import _execute_with_oom_recovery
+from arraybridge.libraries import Array, ArrayLibrary, DType
 from arraybridge.slice_processing import process_slices
 from arraybridge.types import MemoryContractAttribute, MemoryType
 
 logger = logging.getLogger(__name__)
 
-F = TypeVar("F", bound=Callable[..., Any])
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 class DtypeConversion(Enum):
@@ -136,7 +138,7 @@ class EnumValueRegistryKeyMixin:
 
     strategy_label: ClassVar[str | None] = None
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
+    def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         member = cls.registry_enum_member()
         if isinstance(member, Enum) and cls.__dict__.get("strategy_label") is None:
@@ -152,10 +154,10 @@ class EnumValueRegistryKeyMixin:
 class DtypeConversionRequest:
     """Runtime data needed to convert one decorated function output."""
 
-    array: Any
+    array: Array
     original_dtype_name: str | None
     array_dtype_name: str | None
-    scale_func: Callable[[Any, Any], Any]
+    scale_func: Callable[[Array, DType], Array]
 
 
 class DtypeConversionRunner(
@@ -178,10 +180,11 @@ class DtypeConversionRunner(
         cls,
         dtype_conversion: DtypeConversion,
     ) -> "DtypeConversionRunner":
-        return cast(DtypeConversionRunner, cls.__registry__[dtype_conversion.value]())
+        runner: DtypeConversionRunner = cls.__registry__[dtype_conversion.value]()
+        return runner
 
     @abstractmethod
-    def apply(self, request: DtypeConversionRequest) -> Any:
+    def apply(self, request: DtypeConversionRequest) -> Array:
         """Return output converted according to the configured dtype policy."""
 
 
@@ -190,7 +193,7 @@ class PreserveInputDtypeConversionRunner(DtypeConversionRunner):
 
     dtype_conversion = DtypeConversion.PRESERVE_INPUT
 
-    def apply(self, request: DtypeConversionRequest) -> Any:
+    def apply(self, request: DtypeConversionRequest) -> Array:
         if (
             request.original_dtype_name is not None
             and request.array_dtype_name != request.original_dtype_name
@@ -204,14 +207,14 @@ class NativeOutputDtypeConversionRunner(DtypeConversionRunner):
 
     dtype_conversion = DtypeConversion.NATIVE_OUTPUT
 
-    def apply(self, request: DtypeConversionRequest) -> Any:
+    def apply(self, request: DtypeConversionRequest) -> Array:
         return request.array
 
 
 class FixedDtypeConversionRunner(DtypeConversionRunner):
     """Scale output to the dtype declared by a fixed DtypeConversion member."""
 
-    def apply(self, request: DtypeConversionRequest) -> Any:
+    def apply(self, request: DtypeConversionRequest) -> Array:
         if self.dtype_conversion is None:
             raise TypeError("FixedDtypeConversionRunner requires dtype_conversion.")
         target_dtype = self.dtype_conversion.numpy_dtype
@@ -266,66 +269,11 @@ class KeywordOnlySignatureExtension:
         return len(parameters)
 
 
-class ThreadGPUContextStorage(threading.local):
-    """Declare the existing native thread-local context slot and its type."""
-
-    context: "ThreadGPUContext | None" = None
-
-
-class ThreadGPUContext:
-    """Runtime-owned thread-local streams keyed by framework/device identity.
-
-    Keep the runtime handle on its importable owner, not in decorator function
-    globals. A retained, unpublished decorated callable is serialized by value;
-    its durable closure must not pull a ``threading.local`` into history.
-    """
-
-    _contexts: ClassVar[ThreadGPUContextStorage] = ThreadGPUContextStorage()
-
-    @classmethod
-    def current(cls) -> "ThreadGPUContext":
-        """Return this thread's runtime context without serializing its handle."""
-        context = cls._contexts.context
-        if context is None:
-            context = cls()
-            cls._contexts.context = context
-        return context
-
-    def __init__(self):
-        self._streams: dict[tuple[MemoryType, int], Any] = {}
-
-    def stream_for(
-        self,
-        memory_type: MemoryType,
-        module: Any,
-    ) -> tuple[int | None, Any | None]:
-        """Return the current device and its stable thread-local stream."""
-
-        device_id = memory_type.current_device_id(module)
-        if device_id is None:
-            return None, None
-        memory_type.require_device(device_id, module)
-        key = (memory_type, device_id)
-        if key not in self._streams:
-            with memory_type.device_scope(device_id, module):
-                stream = memory_type.create_stream(module)
-            if stream is None:
-                return device_id, None
-            self._streams[key] = stream
-            logger.debug(
-                "Created %s stream for device %d in thread %s",
-                memory_type.display_name,
-                device_id,
-                threading.current_thread().name,
-            )
-        return device_id, self._streams[key]
-
-
 def memory_types(
     input_type: str | MemoryType,
     output_type: str | MemoryType,
-    contract: Any | None = None,
-) -> Callable[[F], F]:
+    contract: object | None = None,
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """
     Base decorator for declaring memory types of a function.
 
@@ -337,9 +285,9 @@ def memory_types(
     input_memory_type = input_member.value
     output_memory_type = output_member.value
 
-    def decorator(func: F) -> F:
+    def decorator(func: Callable[P, R]) -> Callable[P, R]:
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             result = func(*args, **kwargs)
 
             # Apply output validation only when a callable contract was provided.
@@ -355,7 +303,7 @@ def memory_types(
         if contract is not None and not callable(contract):
             setattr(wrapper, "__processing_contract__", contract)
 
-        return cast(F, wrapper)
+        return wrapper
 
     return decorator
 
@@ -374,9 +322,9 @@ def wrap_dtype_preserving_callable(
     complete framework decorator or ArrayBridge internals.
     """
     func_name = func.__name__
-    input_memory_type = MemoryType(MemoryContractAttribute.INPUT.read(func, mem_type.value))
-    output_memory_type = MemoryType(MemoryContractAttribute.OUTPUT.read(func, mem_type.value))
-    scale_func = output_memory_type.scale_dtype
+    input_library = MemoryType(MemoryContractAttribute.INPUT.read(func, mem_type.value)).library
+    output_library = MemoryType(MemoryContractAttribute.OUTPUT.read(func, mem_type.value)).library
+    scale_func = output_library.scale_dtype
     default_dtype_config = (
         DtypeConversionConfig.default_value()
         if dtype_config_default is None
@@ -402,9 +350,7 @@ def wrap_dtype_preserving_callable(
         # Store original dtype
         original_dtype = getattr(image, "dtype", None)
         original_dtype_name = (
-            None
-            if original_dtype is None
-            else input_memory_type.canonical_dtype_name(original_dtype)
+            None if original_dtype is None else input_library.dtype_name(original_dtype)
         )
 
         # Handle slice_by_slice processing for 3D arrays
@@ -423,7 +369,7 @@ def wrap_dtype_preserving_callable(
                 DtypeConversionRequest(
                     array=array,
                     original_dtype_name=original_dtype_name,
-                    array_dtype_name=output_memory_type.canonical_dtype_name(array.dtype),
+                    array_dtype_name=output_library.dtype_name(array.dtype),
                     scale_func=scale_func,
                 )
             )
@@ -468,59 +414,10 @@ def wrap_dtype_preserving_callable(
     return dtype_wrapper
 
 
-def _create_gpu_wrapper(func, mem_type: MemoryType, oom_recovery: bool):
-    """
-    Auto-generate GPU stream/device wrapper for any GPU memory type.
-
-    This function creates the GPU-specific wrapper with stream management and OOM recovery.
-    """
-
-    @functools.wraps(func)
-    def gpu_wrapper(*args, **kwargs):
-        framework = mem_type.import_if_installed()
-
-        # Check if GPU is available for this framework
-        if framework is not None and mem_type.available_device_ids(framework):
-            # Get thread-local context
-            ctx = ThreadGPUContext.current()
-
-            device_id, stream = ctx.stream_for(mem_type, framework)
-
-            # Define execution function that captures args/kwargs
-            def execute_with_stream():
-                with mem_type.stream_scope(stream, framework):
-                    return func(*args, **kwargs)
-
-            # Execute with OOM recovery if enabled
-            if oom_recovery:
-                return _execute_with_oom_recovery(
-                    execute_with_stream,
-                    mem_type.value,
-                    device_id=device_id,
-                )
-            return execute_with_stream()
-
-        # CPU fallback or framework not available
-        return func(*args, **kwargs)
-
-    # Preserve memory type attributes
-    MemoryContractAttribute.INPUT.write(
-        gpu_wrapper,
-        MemoryContractAttribute.INPUT.read(func),
-    )
-    MemoryContractAttribute.OUTPUT.write(
-        gpu_wrapper,
-        MemoryContractAttribute.OUTPUT.read(func),
-    )
-
-    return gpu_wrapper
-
-
 def _create_memory_decorator(mem_type: MemoryType):
     """
     Factory function that creates a decorator for a specific memory type.
 
-    This single factory replaces 6 nearly-identical decorator functions.
     """
 
     def decorator(
@@ -565,9 +462,8 @@ def _create_memory_decorator(mem_type: MemoryType):
                 dtype_config_default=dtype_config_default,
             )
 
-            # Apply GPU wrapper if this is a GPU memory type
-            if mem_type.is_gpu:
-                func = _create_gpu_wrapper(func, mem_type, oom_recovery)
+            # What the library's devices need around the call (streams, OOM retries).
+            func = mem_type.library.execution_wrapper(func, oom_recovery)
 
             MemoryContractAttribute.EXECUTION.write(func, mem_type.value)
 
@@ -580,18 +476,25 @@ def _create_memory_decorator(mem_type: MemoryType):
 
     # Set proper function name and docstring
     decorator.__name__ = mem_type.value
-    decorator.__doc__ = (decorator.__doc__ or "").format(mem_type=mem_type.display_name)
+    decorator.__doc__ = (decorator.__doc__ or "").format(mem_type=mem_type.library.display_name)
 
     return decorator
 
 
-# Auto-generate all 6 memory type decorators
-for mem_type in MemoryType:
-    decorator_func = _create_memory_decorator(mem_type)
-    globals()[mem_type.value] = decorator_func
+def __getattr__(name: str):
+    """The decorator named after a registered library, made on first access."""
+
+    if name.startswith("_") or name not in ArrayLibrary.__registry__:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    decorator = _create_memory_decorator(MemoryType(name))
+    globals()[name] = decorator
+    return decorator
 
 
-# Export the fixed decorator infrastructure plus declaration-derived helpers.
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(ArrayLibrary.__registry__))
+
+
 __all__ = [
     "memory_types",
     "DtypeConversion",
@@ -600,4 +503,4 @@ __all__ = [
     "PRESERVE_INPUT_DTYPE_CONFIG",
     "SliceBySliceRuntimeParameter",
     "wrap_dtype_preserving_callable",
-] + [memory_type.value for memory_type in MemoryType]
+]

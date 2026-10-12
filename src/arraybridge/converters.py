@@ -1,85 +1,54 @@
-"""Memory conversion public API for OpenHCS."""
+"""Convert an array from one library to another, and tell which library made one."""
 
-from typing import Any, cast
+from __future__ import annotations
 
-import numpy as np
-
+from arraybridge.devices import Device
 from arraybridge.exceptions import MemoryConversionError
-from arraybridge.types import VALID_MEMORY_TYPES, MemoryType
+from arraybridge.libraries import Array, ArrayLibrary
+from arraybridge.types import MemoryType
+
+
+def _library(memory_type: str | MemoryType, role: str) -> ArrayLibrary[Array]:
+    name = memory_type.value if isinstance(memory_type, MemoryType) else memory_type
+    try:
+        return ArrayLibrary.named(name)
+    except ValueError:
+        raise ValueError(
+            f"Invalid {role} '{name}'. Available types: {sorted(ArrayLibrary.__registry__)}"
+        ) from None
 
 
 def convert_memory(
-    data: Any,
+    data: Array,
     source_type: str | MemoryType,
     target_type: str | MemoryType,
-    gpu_id: int,
-) -> Any:
-    """
-    Convert data between memory types using the unified converter infrastructure.
-
-    Args:
-        data: The data to convert
-        source_type: The source memory type (e.g., "numpy", "torch")
-        target_type: The target memory type (e.g., "cupy", "jax")
-        gpu_id: The target GPU device ID
-
-    Returns:
-        The converted data in the target memory type
+    device: Device,
+) -> Array:
+    """Convert ``data`` from the source library to the target library on ``device``.
 
     Raises:
-        ValueError: If source_type or target_type is invalid
+        ValueError: If source_type or target_type is not a registered library
         MemoryConversionError: If conversion fails
     """
-    source_name = source_type.value if isinstance(source_type, MemoryType) else source_type
-    target_name = target_type.value if isinstance(target_type, MemoryType) else target_type
-    if source_name not in VALID_MEMORY_TYPES:
-        raise ValueError(
-            f"Invalid source_type '{source_name}'. Available types: {sorted(VALID_MEMORY_TYPES)}"
-        )
-    if target_name not in VALID_MEMORY_TYPES:
-        raise ValueError(
-            f"Invalid target_type '{target_name}'. Available types: {sorted(VALID_MEMORY_TYPES)}"
-        )
-
-    source = MemoryType(source_name)
-    target = MemoryType(target_name)
+    source = _library(source_type, "source_type")
+    target = _library(target_type, "target_type")
     try:
-        return source.convert_to(data, target, gpu_id)
+        return source.convert_to(data, target, device)
     except MemoryConversionError:
         raise
     except Exception as error:
         raise MemoryConversionError(
-            source_type=source_name,
-            target_type=target_name,
-            method="MemoryType.convert_to",
+            source_type=str(source.name),
+            target_type=str(target.name),
+            method="ArrayLibrary.convert_to",
             reason=str(error),
         ) from error
 
 
-def detect_memory_type(data: Any) -> str:
-    """
-    Detect the memory type of data using framework config.
-
-    Args:
-        data: The data to detect
-
-    Returns:
-        The detected memory type string (e.g., "numpy", "torch")
+def detect_memory_type(data: object) -> str:
+    """The name of the library that made ``data`` (``"numpy"``, ``"torch"``, ...).
 
     Raises:
-        ValueError: If memory type cannot be detected
+        ValueError: If no registered library made it
     """
-    # NumPy special case (most common, check first)
-    if isinstance(data, np.ndarray):
-        return cast(str, MemoryType.NUMPY.value)
-
-    # Check all frameworks using their module names from config
-    module_name = type(data).__module__
-
-    top_level = module_name.split(".")[0]
-
-    for mem_type in MemoryType:
-        if top_level in mem_type.recognized_module_names:
-            return cast(str, mem_type.value)
-
-    raise ValueError(f"Unknown memory type for {type(data)} (module: {module_name})")
+    return str(ArrayLibrary.of(data).name)

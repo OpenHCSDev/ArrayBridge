@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
@@ -23,7 +22,7 @@ class ArrayGeometry:
         return len(self.shape)
 
     @classmethod
-    def from_value(cls, value: Any) -> ArrayGeometry | None:
+    def from_value(cls, value: object) -> ArrayGeometry | None:
         """Inspect an array or nominal payload without forcing host conversion."""
 
         data = value.array_payload_data() if isinstance(value, ArrayPayload) else value
@@ -43,7 +42,7 @@ class ArrayGeometry:
     @classmethod
     def require_from_value(
         cls,
-        value: Any,
+        value: object,
         *,
         value_name: str = "Value",
     ) -> ArrayGeometry:
