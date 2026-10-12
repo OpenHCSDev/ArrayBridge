@@ -136,7 +136,7 @@ ignore_missing_imports = true
 # Optional array libraries are not importable by the checker, so what their
 # modules return is untyped; those values are admitted by Array registration
 # at runtime (see arraybridge.libraries).
-warn_return_any = false
+warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false  # Too strict for scientific code
 

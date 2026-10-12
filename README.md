@@ -147,6 +147,9 @@ that library, on the device of their input: `max`, `min`, `mean`, `sum`,
 `astype`, `reshape`, `broadcast_to`, `ones_like`, `ones`, `prepend_axis`,
 `linspace`, `assign`, `outer`, `floor`, `logical_and`, `stack_arrays`,
 `normalize_planes`, `scale_dtype`, `to_numpy`, `from_numpy`.
+`linspace`, `ones`, `outer` and `floor` exist only on libraries that can make
+an array without a reference array (`ArrayMath`: every built-in library but
+pyclesperanto).
 
 ```python
 import numpy as np

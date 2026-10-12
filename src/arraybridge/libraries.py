@@ -5,7 +5,10 @@ everything that library does differently: devices, moving data, DLPack,
 out-of-memory recognition, child-process environment and native array
 operations. What several libraries share is a parent they inherit from
 (``HostDevices``, ``AcceleratorDevices``, ``CudaLibrary``, ``DLPackImport``,
-``DLPackProtocolExport``, ``NvidiaWheelLibraries``, ``MutableArrays``).
+``DLPackProtocolExport``, ``NvidiaWheelLibraries``, ``InPlaceAssignment``,
+``ArrayMath``, ``NumpyArrayApi``, ``MutableArrays``). The base class holds no
+default that assumes a particular library's API: a library inherits an
+implementation only from a parent it declares.
 
 Adding a library is writing one class here or anywhere else: registration,
 lookup, the ``MemoryType`` member, the decorator and conversion follow from it.
@@ -559,10 +562,9 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
 
     # ----- array operations, each on the device of its input -----
 
+    @abstractmethod
     def accepts(self, value: object) -> bool:
         """Whether ``value`` is a native array of this library."""
-
-        return isinstance(value, self.module.ndarray)
 
     def stack_arrays(self, arrays: Sequence[NativeT], device: Device) -> NativeT:
         """Stack arrays along a new leading axis on ``device``."""
@@ -625,44 +627,30 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
         with self._array_scope(left):
             return self._logical_and(left, right)
 
+    @abstractmethod
     def max(self, data: NativeT, axis: Axis) -> NativeT:
-        return self.array_module.max(data, axis=axis)
+        """The largest value along ``axis``."""
 
+    @abstractmethod
     def min(self, data: NativeT, axis: Axis) -> NativeT:
-        return self.array_module.min(data, axis=axis)
+        """The smallest value along ``axis``."""
 
+    @abstractmethod
     def mean(self, data: NativeT, axis: Axis) -> NativeT:
-        return self.array_module.mean(data, axis=axis)
+        """The mean along ``axis``."""
 
+    @abstractmethod
     def sum(self, data: NativeT, axis: Axis) -> NativeT:
-        return self.array_module.sum(data, axis=axis)
+        """The sum along ``axis``."""
 
     def prepend_axis(self, data: NativeT) -> NativeT:
         """Add a leading axis of length one."""
 
         return self._reshape(data, (1, *getattr(data, "shape")))
 
-    def linspace(self, start: float, stop: float, num: int, *, endpoint: bool) -> NativeT:
-        return self.array_module.linspace(start, stop, num, endpoint=endpoint)
-
-    def ones(self, shape: int | tuple[int, ...], dtype: DType) -> NativeT:
-        """Allocate ones on the library's default device."""
-
-        return self.array_module.ones(shape, dtype=_mapped_dtype(dtype, self.array_module))
-
+    @abstractmethod
     def assign(self, data: NativeT, index: slice, values: NativeT) -> NativeT:
         """Return ``data`` with ``data[index]`` replaced by ``values``."""
-
-        getattr(data, "__setitem__")(index, values)
-        return data
-
-    def outer(self, left: NativeT, right: NativeT) -> NativeT:
-        return self.array_module.outer(left, right)
-
-    def floor(self, value: float) -> NativeT:
-        """Floor a host scalar in the library's default precision."""
-
-        return self.array_module.floor(value)
 
     # ----- what a leaf supplies; these run without choosing a device -----
 
@@ -674,24 +662,29 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
     def _scale_dtype(self, result: NativeT, target_dtype: DType) -> NativeT:
         """The library's intensity-preserving dtype conversion."""
 
+    @abstractmethod
     def _stack(self, values: Sequence[NativeT]) -> NativeT:
-        return self.module.stack(tuple(values), axis=0)
+        """Stack along a new leading axis."""
 
+    @abstractmethod
     def _cast(self, data: NativeT, dtype: DType) -> NativeT:
-        return getattr(data, "astype")(dtype, copy=False)
+        """The values as ``dtype``, without rescaling."""
 
+    @abstractmethod
     def _logical_and(self, left: NativeT, right: NativeT) -> NativeT:
-        return self.module.logical_and(left, right)
+        """Element-wise ``left and right``."""
 
+    @abstractmethod
     def _reshape(self, data: NativeT, shape: tuple[int, ...]) -> NativeT:
-        return getattr(data, "reshape")(shape)
+        """The same elements in ``shape``."""
 
+    @abstractmethod
     def _broadcast_to(self, data: NativeT, shape: tuple[int, ...]) -> NativeT:
-        return self.module.broadcast_to(data, shape)
+        """``data`` repeated out to ``shape``."""
 
+    @abstractmethod
     def _ones_like(self, reference: NativeT, shape: tuple[int, ...], dtype: DType) -> NativeT:
-        del reference
-        return self.module.ones(shape, dtype=dtype)
+        """Ones of ``shape`` and ``dtype`` on the device of ``reference``."""
 
     def _normalize_planes(
         self, data: NativeT, dtype: DType, scales: Sequence[float | None]
@@ -972,7 +965,89 @@ class NvidiaWheelLibraries(ArrayLibrary[NativeT]):
         return prepared
 
 
-class MutableArrays(ArrayLibrary[NativeT]):
+class InPlaceAssignment(ArrayLibrary[NativeT]):
+    """Libraries whose arrays take ``array[index] = values``."""
+
+    def assign(self, data: NativeT, index: slice, values: NativeT) -> NativeT:
+        getattr(data, "__setitem__")(index, values)
+        return data
+
+
+class ArrayMath(ArrayLibrary[NativeT]):
+    """Libraries that make arrays without a reference array, on their default device.
+
+    A library whose module has no such functions (pyclesperanto) does not
+    inherit this, so asking it for one fails at the attribute, not in the call.
+    """
+
+    @abstractmethod
+    def linspace(self, start: float, stop: float, num: int, *, endpoint: bool) -> NativeT:
+        """``num`` evenly spaced values from ``start`` to ``stop``."""
+
+    @abstractmethod
+    def ones(self, shape: int | tuple[int, ...], dtype: DType) -> NativeT:
+        """Ones of ``shape`` and ``dtype``."""
+
+    @abstractmethod
+    def outer(self, left: NativeT, right: NativeT) -> NativeT:
+        """The outer product of two vectors."""
+
+    @abstractmethod
+    def floor(self, value: float) -> NativeT:
+        """Floor a host scalar in the library's default precision."""
+
+
+class NumpyArrayApi(ArrayMath[NativeT]):
+    """Libraries whose array module and arrays follow the NumPy API (NumPy, CuPy, JAX)."""
+
+    def accepts(self, value: object) -> bool:
+        return isinstance(value, self.array_module.ndarray)
+
+    def max(self, data: NativeT, axis: Axis) -> NativeT:
+        return self.array_module.max(data, axis=axis)
+
+    def min(self, data: NativeT, axis: Axis) -> NativeT:
+        return self.array_module.min(data, axis=axis)
+
+    def mean(self, data: NativeT, axis: Axis) -> NativeT:
+        return self.array_module.mean(data, axis=axis)
+
+    def sum(self, data: NativeT, axis: Axis) -> NativeT:
+        return self.array_module.sum(data, axis=axis)
+
+    def linspace(self, start: float, stop: float, num: int, *, endpoint: bool) -> NativeT:
+        return self.array_module.linspace(start, stop, num, endpoint=endpoint)
+
+    def ones(self, shape: int | tuple[int, ...], dtype: DType) -> NativeT:
+        return self.array_module.ones(shape, dtype=_mapped_dtype(dtype, self.array_module))
+
+    def outer(self, left: NativeT, right: NativeT) -> NativeT:
+        return self.array_module.outer(left, right)
+
+    def floor(self, value: float) -> NativeT:
+        return self.array_module.floor(value)
+
+    def _stack(self, values: Sequence[NativeT]) -> NativeT:
+        return self.array_module.stack(tuple(values), axis=0)
+
+    def _cast(self, data: NativeT, dtype: DType) -> NativeT:
+        return getattr(data, "astype")(dtype, copy=False)
+
+    def _logical_and(self, left: NativeT, right: NativeT) -> NativeT:
+        return self.array_module.logical_and(left, right)
+
+    def _reshape(self, data: NativeT, shape: tuple[int, ...]) -> NativeT:
+        return getattr(data, "reshape")(shape)
+
+    def _broadcast_to(self, data: NativeT, shape: tuple[int, ...]) -> NativeT:
+        return self.array_module.broadcast_to(data, shape)
+
+    def _ones_like(self, reference: NativeT, shape: tuple[int, ...], dtype: DType) -> NativeT:
+        del reference
+        return self.array_module.ones(shape, dtype=dtype)
+
+
+class MutableArrays(NumpyArrayApi[NativeT], InPlaceAssignment[NativeT]):
     """Libraries with the NumPy array API whose arrays can be changed in place."""
 
     def _normalize_planes(
@@ -1109,6 +1184,8 @@ class TorchLibrary(
     CudaLibrary["torch.Tensor"],
     DLPackImport["torch.Tensor"],
     DLPackProtocolExport["torch.Tensor"],
+    ArrayMath["torch.Tensor"],
+    InPlaceAssignment["torch.Tensor"],
 ):
     name = "torch"
     display_name = "PyTorch"
@@ -1189,6 +1266,12 @@ class TorchLibrary(
             return self.module.linspace(start, stop, num, dtype=float32)
         return self.module.linspace(start, stop, num + 1, dtype=float32)[:-1]
 
+    def ones(self, shape: int | tuple[int, ...], dtype: DType) -> torch.Tensor:
+        return self.module.ones(shape, dtype=_mapped_dtype(dtype, self.module))
+
+    def outer(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+        return self.module.outer(left, right)
+
     def floor(self, value: float) -> torch.Tensor:
         return self.module.floor(self.module.tensor(value))
 
@@ -1219,6 +1302,12 @@ class TorchLibrary(
         native = dtype if isinstance(dtype, module.dtype) else _mapped_dtype(dtype, module)
         return data.to(dtype=native)
 
+    def _logical_and(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+        return self.module.logical_and(left, right)
+
+    def _reshape(self, data: torch.Tensor, shape: tuple[int, ...]) -> torch.Tensor:
+        return data.reshape(shape)
+
     def _broadcast_to(self, data: torch.Tensor, shape: tuple[int, ...]) -> torch.Tensor:
         return data.expand(shape)
 
@@ -1233,6 +1322,7 @@ class TensorflowLibrary(
     HostDevices["tensorflow.Tensor"],
     AcceleratorDevices["tensorflow.Tensor"],
     DLPackImport["tensorflow.Tensor"],
+    ArrayMath["tensorflow.Tensor"],
 ):
     name = "tensorflow"
     display_name = "TensorFlow"
@@ -1327,6 +1417,9 @@ class TensorflowLibrary(
             return self.module.linspace(float(start), float(stop), num)
         return self.module.linspace(float(start), float(stop), num + 1)[:-1]
 
+    def ones(self, shape: int | tuple[int, ...], dtype: DType) -> tensorflow.Tensor:
+        return self.module.ones(shape, dtype=_mapped_dtype(dtype, self.module))
+
     def assign(
         self, data: tensorflow.Tensor, index: slice, values: tensorflow.Tensor
     ) -> tensorflow.Tensor:
@@ -1364,8 +1457,21 @@ class TensorflowLibrary(
         native = dtype if isinstance(dtype, module.dtypes.DType) else _mapped_dtype(dtype, module)
         return module.cast(data, native)
 
+    def _stack(self, values: Sequence[tensorflow.Tensor]) -> tensorflow.Tensor:
+        return self.module.stack(tuple(values), axis=0)
+
+    def _logical_and(
+        self, left: tensorflow.Tensor, right: tensorflow.Tensor
+    ) -> tensorflow.Tensor:
+        return self.module.logical_and(left, right)
+
     def _reshape(self, data: tensorflow.Tensor, shape: tuple[int, ...]) -> tensorflow.Tensor:
         return self.module.reshape(data, shape)
+
+    def _broadcast_to(
+        self, data: tensorflow.Tensor, shape: tuple[int, ...]
+    ) -> tensorflow.Tensor:
+        return self.module.broadcast_to(data, shape)
 
     def _ones_like(
         self, reference: tensorflow.Tensor, shape: tuple[int, ...], dtype: DType
@@ -1380,6 +1486,7 @@ class JaxLibrary(
     AcceleratorDevices["jax.Array"],
     DLPackImport["jax.Array"],
     DLPackProtocolExport["jax.Array"],
+    NumpyArrayApi["jax.Array"],
 ):
     name = "jax"
     display_name = "JAX"
@@ -1454,9 +1561,6 @@ class JaxLibrary(
                 return copier()
         return data
 
-    def accepts(self, value: object) -> bool:
-        return isinstance(value, self.module.numpy.ndarray)
-
     def mean(self, data: jax.Array, axis: Axis) -> jax.Array:
         jnp = self.module.numpy
         return jnp.mean(data.astype(jnp.float32), axis=axis)
@@ -1492,23 +1596,16 @@ class JaxLibrary(
             scaled = jnp.clip(scaled, *bounds)
         return scaled.astype(mapped)
 
-    def _stack(self, values: Sequence[jax.Array]) -> jax.Array:
-        return self.module.numpy.stack(tuple(values), axis=0)
-
     def _cast(self, data: jax.Array, dtype: DType) -> jax.Array:
         return data.astype(_mapped_dtype(dtype, self.module.numpy))
-
-    def _logical_and(self, left: jax.Array, right: jax.Array) -> jax.Array:
-        return self.module.numpy.logical_and(left, right)
-
-    def _broadcast_to(self, data: jax.Array, shape: tuple[int, ...]) -> jax.Array:
-        return self.module.numpy.broadcast_to(data, shape)
 
     def _ones_like(self, reference: jax.Array, shape: tuple[int, ...], dtype: DType) -> jax.Array:
         return self.module.numpy.ones(shape, dtype=dtype, device=reference.device)
 
 
-class PyclesperantoLibrary(AcceleratorDevices["pyclesperanto.Array"]):
+class PyclesperantoLibrary(
+    AcceleratorDevices["pyclesperanto.Array"], InPlaceAssignment["pyclesperanto.Array"]
+):
     name = "pyclesperanto"
     oom_messages = ("cl_mem_object_allocation_failure", "cl_out_of_resources", "out of memory")
 
