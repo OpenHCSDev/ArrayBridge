@@ -2,17 +2,26 @@
 
 ``ConversionRoute`` leaves are tried in the order they are declared in this
 module. ``applies`` reads only the two library declarations and the two device
-descriptions, so the same test answers "which mechanism will be used" on a
-machine without the device and selects the route when the conversion runs.
+descriptions, so the same test answers "which mechanism will be tried first" on
+a machine without the device and selects the route when the conversion runs.
+
+A plan sees no array. Where a mechanism depends on the particular array (a
+DLPack capsule the target cannot read, a NumPy buffer the target cannot wrap),
+the record of the conversion names the mechanism that was used and lists the
+planned one under ``declined_mechanisms``.
+
+A ``ConversionRecord`` is written when data was moved, copied or wrapped. The
+route that leaves the array where it is (``StaysInPlace``) writes none.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from abc import ABC, abstractmethod
+from abc import ABC, ABCMeta, abstractmethod
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from types import NotImplementedType
 from typing import TYPE_CHECKING, ClassVar, TypeGuard, TypeVar
@@ -53,6 +62,8 @@ class ConversionRoute(ABC, metaclass=AutoRegisterMeta):
     __registry_key__ = "mechanism"
     __registry__: ClassVar[Mapping[str, type[ConversionRoute]]] = {}
     mechanism: ClassVar[str | None] = None
+    writes_a_record: ClassVar[bool] = True
+    """Whether a conversion by this route is reported to the observer."""
 
     @classmethod
     @abstractmethod
@@ -75,6 +86,23 @@ class ConversionRoute(ABC, metaclass=AutoRegisterMeta):
         target_device: Device,
     ) -> T:
         """Carry ``data`` to ``target`` on ``target_device`` or raise ``RouteDeclinedError``."""
+
+    @classmethod
+    def taken(
+        cls,
+        data: S,
+        result: T,
+        source: ArrayLibrary[S],
+        target: ArrayLibrary[T],
+    ) -> type[ConversionRoute]:
+        """The route that names what ``convert`` did to make ``result``: this one.
+
+        A route whose mechanism can only be known once the conversion is done
+        answers with another route here, and the record lists this one as declined.
+        """
+
+        del data, result, source, target
+        return cls
 
     @classmethod
     def candidates(
@@ -100,7 +128,11 @@ class ConversionRoute(ABC, metaclass=AutoRegisterMeta):
         target: ArrayLibrary[T],
         target_device: Device,
     ) -> type[ConversionRoute]:
-        """The route a conversion of this pair will try first."""
+        """The route a conversion of this pair will try first.
+
+        It is the route that runs unless the particular array cannot be carried
+        by it, which no plan can know; the record then names the one that did.
+        """
 
         return cls.candidates(source, source_device, target, target_device)[0]
 
@@ -125,14 +157,17 @@ class ConversionRoute(ABC, metaclass=AutoRegisterMeta):
                 logger.debug("%s declined %s to %s: %s", route.mechanism, source, target, reason)
                 declined.append(str(route.mechanism))
                 continue
-            if observer.wants_records and result is not data:
+            if observer.wants_records and route.writes_a_record:
+                taken = route.taken(data, result, source, target)
+                if taken is not route:
+                    declined.append(str(route.mechanism))
                 observer.record(
                     ConversionRecord(
                         source_library=source.name,
                         source_device=source_device.label,
                         target_library=target.name,
                         target_device=target_device.label,
-                        mechanism=str(route.mechanism),
+                        mechanism=str(taken.mechanism),
                         nbytes=target.nbytes_of(result),
                         seconds=time.perf_counter() - started,
                         declined_mechanisms=tuple(declined),
@@ -142,8 +177,42 @@ class ConversionRoute(ABC, metaclass=AutoRegisterMeta):
         raise LookupError(f"No conversion route from {source} to {target}")
 
 
+class StaysInPlace(ConversionRoute):
+    """Same library, same device: nothing is converted and the input is returned.
+
+    This is the one statement of that rule. ``ConversionRoute.planned`` answers
+    with this route, the conversion runs through it, and
+    ``ArrayLibrary.move_to_device`` asks ``applies``. No record is written.
+    """
+
+    mechanism = "stays in place"
+    writes_a_record = False
+
+    @classmethod
+    def applies(
+        cls,
+        source: ArrayLibrary[S],
+        source_device: Device,
+        target: ArrayLibrary[T],
+        target_device: Device,
+    ) -> bool:
+        return source is target and source_device == target_device
+
+    @classmethod
+    def convert(
+        cls,
+        data: S,
+        source: ArrayLibrary[S],
+        target: ArrayLibrary[T],
+        target_device: Device,
+    ) -> T:
+        if not _is_array_of_both(data, source, target):
+            raise TypeError(f"{source} and {target} are different libraries")
+        return data
+
+
 class DeviceMove(ConversionRoute):
-    """Same library: the array stays native and only changes device."""
+    """Same library, another device: the array stays native and changes device."""
 
     mechanism = "device move"
 
@@ -155,7 +224,9 @@ class DeviceMove(ConversionRoute):
         target: ArrayLibrary[T],
         target_device: Device,
     ) -> bool:
-        return source is target
+        return source is target and not StaysInPlace.applies(
+            source, source_device, target, target_device
+        )
 
     @classmethod
     def convert(
@@ -218,8 +289,57 @@ class DLPackExchange(ConversionRoute):
             raise RouteDeclinedError(str(error)) from error
 
 
-class HostCopy(ConversionRoute):
-    """Download to a NumPy array in main memory, then upload to the target."""
+class HostExchange(ConversionRoute):
+    """Through NumPy: the source hands over a NumPy array and the target takes it."""
+
+    @classmethod
+    def convert(
+        cls,
+        data: S,
+        source: ArrayLibrary[S],
+        target: ArrayLibrary[T],
+        target_device: Device,
+    ) -> T:
+        return target.unrecorded_from_numpy(source.unrecorded_to_numpy(data), target_device)
+
+
+class SharedHostBuffer(HostExchange):
+    """Both arrays are in main memory and the result is the source's own buffer.
+
+    Declared by the two libraries (``shares_numpy_buffer_on``). Whether one
+    particular array is shared is known only afterwards, by comparing where the
+    two arrays begin; an exchange that copied is recorded as a ``HostCopy``.
+    """
+
+    mechanism = "shared host buffer"
+
+    @classmethod
+    def applies(
+        cls,
+        source: ArrayLibrary[S],
+        source_device: Device,
+        target: ArrayLibrary[T],
+        target_device: Device,
+    ) -> bool:
+        return source.shares_numpy_buffer_on(source_device) and target.shares_numpy_buffer_on(
+            target_device
+        )
+
+    @classmethod
+    def taken(
+        cls,
+        data: S,
+        result: T,
+        source: ArrayLibrary[S],
+        target: ArrayLibrary[T],
+    ) -> type[ConversionRoute]:
+        address = source.host_address_of(data)
+        shared = address is not None and address == target.host_address_of(result)
+        return cls if shared else HostCopy
+
+
+class HostCopy(HostExchange):
+    """The values are copied: downloaded to NumPy in main memory, then uploaded."""
 
     mechanism = "host copy"
 
@@ -233,20 +353,14 @@ class HostCopy(ConversionRoute):
     ) -> bool:
         return True
 
-    @classmethod
-    def convert(
-        cls,
-        data: S,
-        source: ArrayLibrary[S],
-        target: ArrayLibrary[T],
-        target_device: Device,
-    ) -> T:
-        return target.unrecorded_from_numpy(source.unrecorded_to_numpy(data), target_device)
-
 
 @dataclass(frozen=True, slots=True)
 class ConversionRecord:
-    """One conversion that produced a new array. Plain fields: pickles and dumps to JSON."""
+    """One conversion that moved, copied or wrapped data. Plain fields: pickles, dumps to JSON.
+
+    ``mechanism`` names what was done. ``declined_mechanisms`` lists the routes
+    tried before it that could not carry this array.
+    """
 
     source_library: str
     source_device: str
@@ -276,14 +390,33 @@ class ConversionRecord:
         )
 
 
-class ConversionObserver(ABC):
+class ObserverOfThisContext(ABCMeta):
+    """Gives ``ConversionObserver.current``: read and assigned per context."""
+
+    @property
+    def current(cls) -> ConversionObserver:
+        """The observer of the running thread or asyncio task."""
+
+        return _observer.get()
+
+    @current.setter
+    def current(cls, observer: ConversionObserver) -> None:
+        _observer.set(observer)
+
+
+class ConversionObserver(ABC, metaclass=ObserverOfThisContext):
     """Receives one ``ConversionRecord`` per conversion while it is installed.
 
-    ``ConversionObserver.current`` is the one hook. Its default ignores
-    conversions and asks for no records, so nothing is timed or sized.
+    ``ConversionObserver.current`` is the one hook, and it belongs to the
+    context (``contextvars``) that reads it. Every thread starts with the
+    default, which ignores conversions and asks for no records, so nothing is
+    timed or sized. An asyncio task starts with the observer of the code that
+    created it. Installing an observer in one thread or task changes nothing
+    in another; to observe the conversions of a thread you start, run it in a
+    copy of your context: ``Thread(target=contextvars.copy_context().run,
+    args=(work,))``.
     """
 
-    current: ClassVar[ConversionObserver]
     wants_records: ClassVar[bool] = True
 
     @abstractmethod
@@ -292,20 +425,19 @@ class ConversionObserver(ABC):
 
     @contextmanager
     def installed(self) -> Iterator[ConversionObserver]:
-        """Make this the process's observer for the duration of a block."""
+        """Make this the observer of this context for the duration of a block."""
 
-        previous = ConversionObserver.current
-        ConversionObserver.current = self
+        previous = self.install()
         try:
             yield self
         finally:
-            ConversionObserver.current = previous
+            previous.install()
 
     def install(self) -> ConversionObserver:
-        """Make this the process's observer and return the one it replaced."""
+        """Make this the observer of this context and return the one it replaced."""
 
-        previous = ConversionObserver.current
-        ConversionObserver.current = self
+        previous = _observer.get()
+        _observer.set(self)
         return previous
 
 
@@ -318,7 +450,9 @@ class IgnoreConversions(ConversionObserver):
         del record
 
 
-ConversionObserver.current = IgnoreConversions()
+_observer: ContextVar[ConversionObserver] = ContextVar(
+    "arraybridge conversion observer", default=IgnoreConversions()
+)
 
 ConversionKey = tuple[str, str, str, str, str]
 

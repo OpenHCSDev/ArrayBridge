@@ -146,7 +146,7 @@ def test_defining_the_class_is_the_whole_registration(toy_library_class):
     numpy_library = ArrayLibrary.named("numpy")
     assert ConversionRoute.planned(numpy_library, HOST, library, HOST).mechanism == "host copy"
     assert ConversionRoute.planned(library, HOST, numpy_library, HOST).mechanism == "host copy"
-    assert ConversionRoute.planned(library, HOST, library, HOST).mechanism == "device move"
+    assert ConversionRoute.planned(library, HOST, library, HOST).mechanism == "stays in place"
 
     @toy
     def halve(image):

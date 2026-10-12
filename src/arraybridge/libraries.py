@@ -43,7 +43,6 @@ import operator
 import os
 import sys
 import threading
-import time
 from abc import ABCMeta, abstractmethod
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
@@ -56,7 +55,7 @@ from metaclass_registry import AutoRegisterMeta
 
 from arraybridge.array_payload import ArrayPayload
 from arraybridge.arrays import Array
-from arraybridge.conversion import ConversionObserver, ConversionRecord, ConversionRoute, HostCopy
+from arraybridge.conversion import ConversionRoute, StaysInPlace
 from arraybridge.devices import HOST, AcceleratorDevice, Device, HostDevice, NamedDevice
 
 if TYPE_CHECKING:
@@ -465,7 +464,7 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
         """Return ``data`` on ``device``; the same object when it is already there."""
 
         self.require_device(device)
-        if self.device_of(data) == device:
+        if StaysInPlace.applies(self, self.device_of(data), self, device):
             return data
         with self._scope(device):
             return self._move(data, device)
@@ -600,50 +599,27 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
         with self.device_scope(device):
             return self._place(data, device)
 
-    def to_numpy(self, data: NativeT) -> np.ndarray:
-        """Download ``data`` to a NumPy array in main memory."""
+    def shares_numpy_buffer_on(self, device: Device) -> bool:
+        """Whether an array of this library on ``device`` and a NumPy array can be one buffer."""
 
-        observer = ConversionObserver.current
-        if not observer.wants_records:
-            return self._to_host(data)
-        started = time.perf_counter()
-        source_device = self.device_of(data)
-        result = self._to_host(data)
-        if result is not data:
-            observer.record(
-                ConversionRecord(
-                    source_library=str(self.name),
-                    source_device=source_device.label,
-                    target_library=str(NumpyLibrary.name),
-                    target_device=HOST.label,
-                    mechanism=str(HostCopy.mechanism),
-                    nbytes=int(result.nbytes),
-                    seconds=time.perf_counter() - started,
-                )
-            )
-        return result
+        del device
+        return False
+
+    def host_address_of(self, data: NativeT) -> int | None:
+        """Where ``data`` begins in main memory; ``None`` when no bytes of it are there."""
+
+        del data
+        return None
+
+    def to_numpy(self, data: NativeT) -> np.ndarray:
+        """``data`` as a NumPy array in main memory: the conversion to NumPy on the host."""
+
+        return ConversionRoute.run(data, self, NumpyLibrary.registered(), HOST)
 
     def from_numpy(self, data: np.ndarray, device: Device) -> NativeT:
-        """Create an array of this library on ``device`` from a NumPy array."""
+        """An array of this library on ``device``: the conversion from NumPy on the host."""
 
-        observer = ConversionObserver.current
-        if not observer.wants_records:
-            return self.unrecorded_from_numpy(data, device)
-        started = time.perf_counter()
-        result = self.unrecorded_from_numpy(data, device)
-        if result is not data:
-            observer.record(
-                ConversionRecord(
-                    source_library=str(NumpyLibrary.name),
-                    source_device=HOST.label,
-                    target_library=str(self.name),
-                    target_device=device.label,
-                    mechanism=str(HostCopy.mechanism),
-                    nbytes=int(data.nbytes),
-                    seconds=time.perf_counter() - started,
-                )
-            )
-        return result
+        return ConversionRoute.run(data, NumpyLibrary.registered(), self, device)
 
     def convert_to(self, data: NativeT, target: ArrayLibrary[TargetT], device: Device) -> TargetT:
         """Convert ``data`` to ``target`` on ``device`` by the first route that carries it."""
@@ -845,6 +821,27 @@ class HostDevices(ArrayLibrary[NativeT]):
     @abstractmethod
     def _move_to_host(self, data: NativeT) -> NativeT:
         """The same native array in main memory."""
+
+
+class NumpyBufferSharing(HostDevices[NativeT]):
+    """Libraries whose main-memory arrays can be the very buffer of a NumPy array.
+
+    Declared after measuring it: the library's exchange with NumPy on the host
+    returns an array that begins at the address of the one it was given, for
+    some arrays at least. ``host_address_of`` is what decides it for one array.
+    """
+
+    def shares_numpy_buffer_on(self, device: Device) -> bool:
+        return isinstance(device, HostDevice)
+
+    def host_address_of(self, data: NativeT) -> int | None:
+        if not isinstance(self.device_of(data), HostDevice) or self.nbytes_of(data) == 0:
+            return None
+        return self._first_element_address(data)
+
+    @abstractmethod
+    def _first_element_address(self, data: NativeT) -> int:
+        """Address of the first element of an array held in main memory."""
 
 
 class AcceleratorDevices(ArrayLibrary[NativeT]):
@@ -1243,7 +1240,7 @@ class MutableArrays(NumpyArrayApi[MutableNativeT], InPlaceAssignment[MutableNati
 # ---------------------------------------------------------------------------
 
 
-class NumpyLibrary(HostDevices["np.ndarray"], MutableArrays["np.ndarray"]):
+class NumpyLibrary(NumpyBufferSharing["np.ndarray"], MutableArrays["np.ndarray"]):
     name = "numpy"
     display_name = "NumPy"
     oom_messages = ("cannot allocate memory", "memory exhausted")
@@ -1255,9 +1252,21 @@ class NumpyLibrary(HostDevices["np.ndarray"], MutableArrays["np.ndarray"]):
     def array_module(self) -> MutableNumpyFunctions[np.ndarray]:
         return self.module
 
+    @classmethod
+    def registered(cls) -> NumpyLibrary:
+        """The NumPy library every conversion to or from NumPy names as its other end."""
+
+        library = ArrayLibrary.named(cls.name)
+        if not isinstance(library, NumpyLibrary):
+            raise TypeError(f"{library!r} is registered as '{cls.name}' and is not NumPy")
+        return library
+
     def device_of(self, data: np.ndarray) -> Device:
         del data
         return HOST
+
+    def _first_element_address(self, data: np.ndarray) -> int:
+        return data.ctypes.data
 
     def accepts(self, value: object) -> bool:
         return isinstance(value, (self.module.ndarray, ArrayPayload))
@@ -1354,7 +1363,7 @@ class CupyLibrary(
 
 
 class TorchLibrary(
-    HostDevices["torch.Tensor"],
+    NumpyBufferSharing["torch.Tensor"],
     CudaLibrary["torch.Tensor"],
     DLPackImport["torch.Tensor"],
     DLPackProtocolExport["torch.Tensor"],
@@ -1402,6 +1411,9 @@ class TorchLibrary(
 
     def _move_to_host(self, data: torch.Tensor) -> torch.Tensor:
         return data.cpu()
+
+    def _first_element_address(self, data: torch.Tensor) -> int:
+        return data.data_ptr()
 
     def current_device(self) -> AcceleratorDevice | None:
         return (
@@ -1683,7 +1695,7 @@ class TensorflowLibrary(
 
 
 class JaxLibrary(
-    HostDevices["jax.Array"],
+    NumpyBufferSharing["jax.Array"],
     AcceleratorDevices["jax.Array"],
     DLPackImport["jax.Array"],
     DLPackProtocolExport["jax.Array"],
@@ -1742,6 +1754,9 @@ class JaxLibrary(
 
     def _wrap_host_array(self, data: np.ndarray) -> jax.Array:
         return self.module.device_put(data, self.module.devices("cpu")[0])
+
+    def _first_element_address(self, data: jax.Array) -> int:
+        return data.unsafe_buffer_pointer()
 
     def _reads_dlpack(self, payload: DLPackPayload) -> bool:
         return _has_dlpack_protocol(payload.source)

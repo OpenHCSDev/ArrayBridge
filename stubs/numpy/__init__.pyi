@@ -27,8 +27,12 @@ class int64(integer): ...
 class float32(floating): ...
 class float64(floating): ...
 
+class _CtypesView:
+    data: int
+
 class ndarray:
     shape: tuple[int, ...]
+    ctypes: _CtypesView
     dtype: dtype
     nbytes: int
     strides: tuple[int, ...]
