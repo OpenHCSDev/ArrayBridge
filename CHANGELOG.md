@@ -77,12 +77,112 @@ two different libraries.
 `MemoryType`'s metaclass overrides are annotated with `EnumMeta`'s signatures;
 its `__call__` override is gone (`Enum` already asks `_missing_`).
 
+### Conversion
+
+The mechanism names a consumer can now see, in the order the routes are tried:
+
+| Mechanism | Route class | Meaning |
+|---|---|---|
+| `"stays in place"` | `StaysInPlace` (new) | Same library, same device. Nothing is converted; the input object is returned. No record. |
+| `"device move"` | `DeviceMove` | Same library, another device. |
+| `"dlpack"` | `DLPackExchange` | The target wraps the source's buffer through DLPack. |
+| `"shared host buffer"` | `SharedHostBuffer` (new) | Both arrays are in main memory and the result begins at the same address as the source: no bytes were copied. |
+| `"host copy"` | `HostCopy` | The values were copied through a NumPy array in main memory. |
+
+**The plan and the run agree that nothing is converted.**
+`ConversionRoute.planned(library, device, library, device)` returns
+`StaysInPlace`. In 0.5.0 it returned `DeviceMove`, while running that
+conversion returned the input and recorded nothing, so a caller had to restate
+the rule. `DeviceMove` now applies only when the device differs. The rule is
+stated once, in `StaysInPlace.applies`; `convert_to`, `to_numpy`, `from_numpy`
+and `move_to_device` all ask it. Every route has `writes_a_record`; it is
+`False` for `StaysInPlace` only. A record means data was moved, copied or
+wrapped.
+
+**A host exchange that shares the buffer is no longer called a copy.** On the
+host, torch and NumPy share one buffer in both directions, and JAX hands NumPy
+its own buffer; 0.5.0 recorded these as `"host copy"`. They are now recorded
+as `"shared host buffer"`. A library declares that it can share by inheriting
+`NumpyBufferSharing` (NumPy, torch and JAX do; TensorFlow copies in both
+directions and does not). Whether one array was shared is decided after the
+exchange by comparing where the two arrays begin (`host_address_of`).
+
+What was measured (Python 3.12, NumPy 2.5.4, torch 2.14.1 CPU, JAX 0.11.2,
+TensorFlow 2.21.0 CPU; pointers, `np.shares_memory` and writing to one array
+and reading the other):
+
+| Exchange on the host | Result |
+|---|---|
+| NumPy to torch | shared, for every dtype tried, Fortran order, stepped and offset views, read-only arrays. A view with a negative step is copied (arraybridge makes it contiguous first). |
+| torch to NumPy | shared |
+| JAX to NumPy | shared (the NumPy array is read-only) |
+| NumPy to JAX | copied, unless the buffer is C-contiguous, starts on a 64-byte boundary and keeps its dtype; then shared |
+| NumPy to TensorFlow, TensorFlow to NumPy | copied |
+| an array with no elements | nothing to share: `"host copy"` of 0 bytes |
+
+**What `planned` returns when sharing depends on the array.** A plan sees
+only declarations and devices, never an array. It returns the route that is
+tried first: `SharedHostBuffer` for NumPy, torch and JAX with NumPy on the
+host. The record names what was done. Where the exchange copied (NumPy to JAX
+for an ordinary NumPy allocation, a reversed view to torch) the record's
+mechanism is `"host copy"` and `declined_mechanisms` is
+`("shared host buffer",)`, the way a declined DLPack exchange is already
+reported. The exchange is done once either way.
+
+What a consumer that keyed on the old answers sees:
+
+- `planned(...) is DeviceMove` is no longer true for the same library and
+  device; test `is StaysInPlace` (or `route.writes_a_record`).
+- Rows that were `"host copy"` for NumPy and torch on the host, and for JAX
+  to NumPy on the host, are now `"shared host buffer"`. `"host copy"` rows
+  that follow a declined `SharedHostBuffer` carry it in `declined_mechanisms`,
+  which `ConversionCounters` does not key on.
+- `planned` for NumPy with torch or JAX on the host (either direction) is
+  `SharedHostBuffer`. Between torch and JAX on the host it is still `"dlpack"`.
+  Anything to or from an accelerator, pyclesperanto or TensorFlow is planned
+  as before.
+- The `nbytes` of a `from_numpy` record is the size of the array that was
+  made (it was the size of the NumPy input; they differ when JAX narrows
+  float64 to float32).
+
+`ConversionRoute.taken(data, result, source, target)` is new: the route that
+names what `convert` did, the route itself unless it says otherwise.
+`ArrayLibrary.shares_numpy_buffer_on(device)` and
+`ArrayLibrary.host_address_of(data)` are new, as is
+`NumpyLibrary.registered()`. `HostCopy` and `SharedHostBuffer` share the new
+parent `HostExchange`, which has no mechanism of its own.
+`arraybridge.libraries` no longer imports `ConversionObserver`,
+`ConversionRecord` and `HostCopy` (they were never exported from it; they are
+in `arraybridge.conversion`).
+
+**`ConversionObserver.current` belongs to the context that reads it.** It was
+one attribute for the whole process, and `installed()` put back whatever it
+had seen on entry: two threads that entered and left in the same order left
+the second thread's observer installed for the rest of the process. The hook
+is now a `contextvars.ContextVar`.
+
+- `ConversionObserver.current` reads the observer of the running thread or
+  asyncio task. Assigning to it sets the observer of that context only.
+- `observer.install()` makes it the observer of this context and returns the
+  one it replaced. `with observer.installed():` does so for a block.
+- A new thread starts with the default observer, which ignores conversions.
+  **An observer installed in the main thread no longer sees conversions made
+  in worker threads.** To observe a thread you start, run it in a copy of your
+  context: `Thread(target=contextvars.copy_context().run, args=(work,))`, or
+  `executor.submit(contextvars.copy_context().run, work)`.
+- An asyncio task starts with the observer of the code that created it, and
+  what it installs stays in that task.
+- `current` is read on the class (`ConversionObserver.current`). It is no
+  longer an attribute of an observer instance.
+
 ### Not verified on a GPU
 
 0.5.1 was tested with NumPy on Python 3.10, 3.12 and 3.13 and with the torch
-CPU wheel on 3.12. CuPy, TensorFlow, JAX and pyclesperanto, and torch on CUDA,
-were exercised only through the fakes in `tests/fakes.py`. `TESTING.md` has
-the commands for a GPU machine.
+CPU wheel on 3.12. The host exchanges in the Conversion section were also run
+against the JAX and TensorFlow CPU builds named there. CuPy and pyclesperanto,
+every accelerator path of torch, TensorFlow and JAX, and everything else
+TensorFlow and JAX do, were exercised only through the fakes in
+`tests/fakes.py`. `TESTING.md` has the commands for a GPU machine.
 
 ## 0.5.0
 

@@ -152,7 +152,11 @@ class FakeTorchTensor(_FakeArray):
         return type(self)(self.values, int(device.removeprefix("cuda:")))
 
     def numpy(self):
-        return self.values.copy()
+        # As torch does in main memory: the NumPy array is the tensor's buffer.
+        return self.values
+
+    def data_ptr(self):
+        return self.values.ctypes.data
 
     def element_size(self):
         return self.values.dtype.itemsize

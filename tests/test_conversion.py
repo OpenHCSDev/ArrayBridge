@@ -1,8 +1,11 @@
 """Conversion routes: which mechanism is planned, which one ran, and what was recorded."""
 
+import asyncio
+import contextvars
 import json
 import pickle
 import sys
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -17,6 +20,8 @@ from arraybridge.conversion import (
     DeviceMove,
     DLPackExchange,
     HostCopy,
+    SharedHostBuffer,
+    StaysInPlace,
 )
 from arraybridge.devices import HOST, AcceleratorDevice
 from arraybridge.libraries import (
@@ -54,10 +59,23 @@ def planned(source, source_device, target, target_device):
 class TestPlanning:
     def test_routes_are_tried_in_declaration_order(self):
         assert list(ConversionRoute.__registry__.items()) == [
+            ("stays in place", StaysInPlace),
             ("device move", DeviceMove),
             ("dlpack", DLPackExchange),
+            ("shared host buffer", SharedHostBuffer),
             ("host copy", HostCopy),
         ]
+
+    @pytest.mark.parametrize(("library", "device"), placements(), ids=str)
+    def test_same_library_and_device_stays_in_place(self, library, device):
+        assert ConversionRoute.planned(library, device, library, device) is StaysInPlace
+        assert not DeviceMove.applies(library, device, library, device)
+        assert StaysInPlace.writes_a_record is False
+        assert all(
+            route.writes_a_record
+            for route in ConversionRoute.__registry__.values()
+            if route is not StaysInPlace
+        )
 
     @pytest.mark.parametrize(("source", "source_device"), placements(), ids=str)
     def test_every_pair_has_a_route_ending_in_a_host_copy(self, source, source_device):
@@ -68,11 +86,14 @@ class TestPlanning:
             assert candidates[0].mechanism == mechanism
             assert candidates[-1] is HostCopy
             if source is target:
-                assert mechanism == "device move"
-            elif source is NUMPY or target in (NUMPY, PYCLESPERANTO):
-                assert mechanism == "host copy"
-            else:
+                same_device = source_device == target_device
+                assert mechanism == ("stays in place" if same_device else "device move")
+            elif PYCLESPERANTO in (source, target) or GPU in (source_device, target_device):
                 assert mechanism in ("dlpack", "host copy")
+            elif NUMPY in (source, target):
+                assert mechanism in ("shared host buffer", "host copy")
+            else:
+                assert mechanism in ("dlpack", "shared host buffer", "host copy")
 
     @pytest.mark.parametrize(
         ("source", "source_device", "target", "target_device", "mechanism"),
@@ -92,6 +113,20 @@ class TestPlanning:
             (PYCLESPERANTO, GPU, TORCH, GPU, "host copy"),
             (TORCH, GPU, PYCLESPERANTO, GPU, "host copy"),
             (TORCH, HOST, TORCH, GPU, "device move"),
+            (TORCH, GPU, TORCH, HOST, "device move"),
+            (TORCH, GPU, TORCH, GPU, "stays in place"),
+            (NUMPY, HOST, NUMPY, HOST, "stays in place"),
+            (NUMPY, HOST, TORCH, HOST, "shared host buffer"),
+            (TORCH, HOST, NUMPY, HOST, "shared host buffer"),
+            (NUMPY, HOST, JAX, HOST, "shared host buffer"),
+            (JAX, HOST, NUMPY, HOST, "shared host buffer"),
+            (NUMPY, HOST, TENSORFLOW, HOST, "host copy"),
+            (TENSORFLOW, HOST, NUMPY, HOST, "host copy"),
+            (TENSORFLOW, HOST, JAX, HOST, "host copy"),
+            (NUMPY, HOST, TORCH, GPU, "host copy"),
+            (TORCH, GPU, NUMPY, HOST, "host copy"),
+            (NUMPY, HOST, CUPY, GPU, "host copy"),
+            (NUMPY, HOST, PYCLESPERANTO, GPU, "host copy"),
         ],
         ids=str,
     )
@@ -323,7 +358,7 @@ class TestRecords:
             pytest.fail(f"a record was built: {fields}")
 
         monkeypatch.setattr(conversion, "ConversionRecord", no_record)
-        monkeypatch.setattr(libraries, "ConversionRecord", no_record)
+        assert not hasattr(libraries, "ConversionRecord")
 
         assert type(ConversionObserver.current) is conversion.IgnoreConversions
         assert ConversionObserver.current.wants_records is False
@@ -367,7 +402,7 @@ class TestRecords:
             source_device="host",
             target_library=target,
             target_device="host",
-            mechanism="host copy",
+            mechanism="shared host buffer",
             nbytes=self.values.nbytes,
             seconds=record.seconds,
         )
@@ -387,8 +422,31 @@ class TestRecords:
         assert NUMPY.from_numpy(self.values, HOST) is self.values
         assert NUMPY.convert_to(self.values, NUMPY, HOST) is self.values
         assert TORCH.convert_to(tensor, TORCH, HOST) is tensor
+        assert TORCH.move_to_device(tensor, HOST) is tensor
 
         assert recorded == []
+        assert planned(NUMPY, HOST, NUMPY, HOST) == planned(TORCH, HOST, TORCH, HOST)
+        assert planned(TORCH, HOST, TORCH, HOST) == "stays in place"
+
+    def test_a_copy_where_sharing_was_planned_is_recorded_as_a_copy(
+        self, torch_module, recorded, monkeypatch
+    ):
+        monkeypatch.setattr(
+            torch_module, "from_numpy", lambda data: FakeTorchTensor(np.array(data))
+        )
+        assert planned(NUMPY, HOST, TORCH, HOST) == "shared host buffer"
+
+        tensor = TORCH.from_numpy(self.values, HOST)
+
+        assert not np.shares_memory(tensor.values, self.values)
+        assert [(each.mechanism, each.declined_mechanisms) for each in recorded] == [
+            ("host copy", ("shared host buffer",))
+        ]
+
+    def test_an_empty_array_shares_nothing(self, torch_module, recorded):
+        TORCH.from_numpy(np.zeros((0, 3), dtype=np.uint8), HOST)
+
+        assert [(each.mechanism, each.nbytes) for each in recorded] == [("host copy", 0)]
 
     def test_device_move_is_recorded(self, torch_module, recorded):
         moved = TORCH.convert_to(FakeTorchTensor(self.values), TORCH, GPU)
@@ -406,6 +464,274 @@ class TestRecords:
         assert pickle.loads(pickle.dumps(record)) == record
         assert ConversionRecord.from_json(json.loads(json.dumps(record.to_json()))) == record
         assert hash(record) == hash(pickle.loads(pickle.dumps(record)))
+
+
+def address(array):
+    return array.ctypes.data
+
+
+def buffer_starting_at(alignment, offset, count=256):
+    """A writable float32 array whose first byte is ``offset`` past a multiple of ``alignment``."""
+
+    raw = np.zeros(count * 4 + 2 * alignment, dtype=np.uint8)
+    start = (-address(raw)) % alignment + offset
+    array = raw[start : start + count * 4].view(np.float32)
+    array[:] = np.arange(count, dtype=np.float32)
+    assert address(array) % alignment == offset
+    return array
+
+
+class TestHostBufferIsSharedOrCopied:
+    """What the record says is what the memory shows, measured on the installed library."""
+
+    plain = staticmethod(lambda: np.arange(24, dtype=np.float32).reshape(4, 6))
+
+    @staticmethod
+    def one(recorded):
+        (record,) = recorded
+        recorded.clear()
+        return record.mechanism, record.declined_mechanisms
+
+    @pytest.mark.torch
+    @pytest.mark.parametrize(
+        "make",
+        [
+            lambda: np.arange(24, dtype=np.float32).reshape(4, 6),
+            lambda: np.arange(24, dtype=np.uint16).reshape(4, 6),
+            lambda: np.arange(24, dtype=np.int64).reshape(4, 6) > 3,
+            lambda: np.asfortranarray(np.arange(24, dtype=np.float64).reshape(4, 6)),
+            lambda: np.arange(24, dtype=np.float32).reshape(4, 6)[1:, ::2],
+        ],
+        ids=["float32", "uint16", "bool", "fortran order", "offset stepped view"],
+    )
+    def test_torch_and_numpy_share_the_buffer_both_ways(self, make, recorded):
+        pytest.importorskip("torch")
+        values = make()
+
+        tensor = TORCH.from_numpy(values, HOST)
+        assert tensor.data_ptr() == address(values)
+        assert self.one(recorded) == ("shared host buffer", ())
+
+        back = TORCH.to_numpy(tensor)
+        assert address(back) == tensor.data_ptr()
+        assert np.shares_memory(back, values)
+        assert self.one(recorded) == ("shared host buffer", ())
+
+        values[0, 0] = not values[0, 0]
+        assert back[0, 0] == values[0, 0] == tensor[0, 0].item()
+
+    @pytest.mark.torch
+    def test_torch_copies_a_reversed_view_and_the_record_says_copy(self, recorded):
+        pytest.importorskip("torch")
+        values = self.plain()[::-1]
+
+        tensor = TORCH.from_numpy(values, HOST)
+
+        assert not np.shares_memory(tensor.numpy(), values)
+        assert self.one(recorded) == ("host copy", ("shared host buffer",))
+        np.testing.assert_array_equal(tensor.numpy(), values)
+
+    @pytest.mark.torch
+    def test_torch_shares_a_read_only_buffer(self, recorded):
+        pytest.importorskip("torch")
+        values = self.plain()
+        values.setflags(write=False)
+
+        with pytest.warns(UserWarning, match="not writable"):
+            tensor = TORCH.from_numpy(values, HOST)
+
+        assert tensor.data_ptr() == address(values)
+        assert self.one(recorded) == ("shared host buffer", ())
+
+    @pytest.mark.jax
+    def test_jax_hands_numpy_its_own_buffer(self, recorded):
+        pytest.importorskip("jax")
+        array = JAX.from_numpy(self.plain(), HOST)
+        recorded.clear()
+
+        first, second = JAX.to_numpy(array), JAX.to_numpy(array)
+
+        assert address(first) == address(second) == array.unsafe_buffer_pointer()
+        assert np.shares_memory(first, second)
+        assert not first.flags.writeable
+        assert [each.mechanism for each in recorded] == ["shared host buffer"] * 2
+
+    @pytest.mark.jax
+    @pytest.mark.parametrize(
+        ("offset", "expected"),
+        [(0, ("shared host buffer", ())), (4, ("host copy", ("shared host buffer",)))],
+        ids=["64-byte aligned", "not aligned"],
+    )
+    def test_jax_wraps_a_numpy_buffer_only_when_it_is_aligned(self, offset, expected, recorded):
+        pytest.importorskip("jax")
+        values = buffer_starting_at(64, offset)
+
+        array = JAX.from_numpy(values, HOST)
+
+        shares = array.unsafe_buffer_pointer() == address(values)
+        assert shares == np.shares_memory(np.asarray(array), values)
+        assert shares == (expected[0] == "shared host buffer")
+        assert self.one(recorded) == expected
+
+    @pytest.mark.tensorflow
+    @pytest.mark.parametrize("offset", [0, 4], ids=["64-byte aligned", "not aligned"])
+    def test_tensorflow_copies_both_ways(self, offset, recorded):
+        pytest.importorskip("tensorflow")
+        values = buffer_starting_at(64, offset)
+        assert planned(NUMPY, HOST, TENSORFLOW, HOST) == "host copy"
+        assert planned(TENSORFLOW, HOST, NUMPY, HOST) == "host copy"
+
+        tensor = TENSORFLOW.from_numpy(values, HOST)
+        assert self.one(recorded) == ("host copy", ())
+        first, second = TENSORFLOW.to_numpy(tensor), TENSORFLOW.to_numpy(tensor)
+
+        assert not np.shares_memory(first, values)
+        assert not np.shares_memory(first, second)
+        values[0] += 1
+        assert first[0] == second[0] == values[0] - 1
+        assert [each.mechanism for each in recorded] == ["host copy"] * 2
+
+    @pytest.mark.torch
+    @pytest.mark.tensorflow
+    def test_tensorflow_to_torch_on_the_host_is_a_copy(self, recorded):
+        pytest.importorskip("torch")
+        pytest.importorskip("tensorflow")
+        tensor = TENSORFLOW.from_numpy(self.plain(), HOST)
+        recorded.clear()
+
+        result = TENSORFLOW.convert_to(tensor, TORCH, HOST)
+
+        assert not np.shares_memory(result.numpy(), TENSORFLOW.unrecorded_to_numpy(tensor))
+        assert self.one(recorded) == ("host copy", ())
+
+
+def counted(counters):
+    return [(row["mechanism"], row["nbytes"]) for row in counters.rows()]
+
+
+class TestObserverBelongsToItsContext:
+    """Each thread and each asyncio task has its own ``ConversionObserver.current``."""
+
+    def test_threads_that_leave_in_entry_order_keep_their_own_observers(self, torch_module):
+        default = ConversionObserver.current
+        first_entered, second_entered, first_left = (threading.Event() for _ in range(3))
+        observers = {name: ConversionCounters() for name in "AB"}
+        current_inside, current_after, failures = {}, {}, []
+
+        def work(name, nbytes):
+            try:
+                # Forced order: A enters, B enters, A leaves, B leaves.
+                assert name == "A" or first_entered.wait(10)
+                with observers[name].installed():
+                    (first_entered if name == "A" else second_entered).set()
+                    assert (second_entered if name == "A" else first_left).wait(10)
+                    current_inside[name] = ConversionObserver.current
+                    TORCH.from_numpy(np.zeros(nbytes, dtype=np.uint8), HOST)
+                current_after[name] = ConversionObserver.current
+                if name == "A":
+                    first_left.set()
+            except BaseException as error:  # reported by the main thread
+                failures.append(error)
+
+        threads = [threading.Thread(target=work, args=pair) for pair in (("A", 8), ("B", 16))]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(20)
+
+        assert failures == []
+        assert current_inside == observers
+        assert counted(observers["A"]) == [("shared host buffer", 8)]
+        assert counted(observers["B"]) == [("shared host buffer", 16)]
+        assert type(current_after["A"]) is type(current_after["B"]) is type(default)
+        assert current_after["A"] is current_after["B"] is default is ConversionObserver.current
+
+    def test_a_new_thread_starts_with_the_default_observer(self, torch_module):
+        default = ConversionObserver.current
+        seen = []
+
+        def work():
+            seen.append(ConversionObserver.current)
+            TORCH.from_numpy(np.zeros(8, dtype=np.uint8), HOST)
+
+        with ConversionCounters().installed() as counters:
+            thread = threading.Thread(target=work)
+            thread.start()
+            thread.join(20)
+
+        assert seen == [default]
+        assert counters.rows() == []
+
+    def test_a_thread_run_in_a_copied_context_reports_to_the_spawner(self, torch_module):
+        seen = []
+
+        def work():
+            seen.append(ConversionObserver.current)
+            TORCH.from_numpy(np.zeros(8, dtype=np.uint8), HOST)
+
+        with ConversionCounters().installed() as counters:
+            thread = threading.Thread(target=contextvars.copy_context().run, args=(work,))
+            thread.start()
+            thread.join(20)
+
+        assert seen == [counters]
+        assert counted(counters) == [("shared host buffer", 8)]
+
+    def test_assigning_current_changes_this_context_only(self):
+        default = ConversionObserver.current
+        counters = ConversionCounters()
+        seen = []
+
+        def assign():
+            ConversionObserver.current = counters
+            seen.append(ConversionObserver.current)
+
+        contextvars.copy_context().run(assign)
+        thread = threading.Thread(target=assign)
+        thread.start()
+        thread.join(20)
+
+        assert seen == [counters, counters]
+        assert ConversionObserver.current is default
+        assert isinstance(vars(type(ConversionObserver))["current"], property)
+
+    def test_asyncio_tasks_keep_their_own_observers(self, torch_module):
+        default = ConversionObserver.current
+
+        async def convert(nbytes, started, may_leave):
+            with ConversionCounters().installed() as counters:
+                started.set()
+                await may_leave.wait()
+                TORCH.from_numpy(np.zeros(nbytes, dtype=np.uint8), HOST)
+                assert ConversionObserver.current is counters
+            return counters, ConversionObserver.current
+
+        async def inherited():
+            TORCH.from_numpy(np.zeros(32, dtype=np.uint8), HOST)
+            return ConversionObserver.current
+
+        async def main():
+            a_started, b_started, a_leaves, b_leaves = (asyncio.Event() for _ in range(4))
+            a = asyncio.create_task(convert(8, a_started, a_leaves))
+            await a_started.wait()
+            b = asyncio.create_task(convert(16, b_started, b_leaves))
+            await b_started.wait()
+            a_leaves.set()
+            a_result = await a
+            b_leaves.set()
+            b_result = await b
+            with ConversionCounters().installed() as spawner:
+                child_saw = await asyncio.create_task(inherited())
+            return a_result, b_result, spawner, child_saw, ConversionObserver.current
+
+        (a, a_after), (b, b_after), spawner, child_saw, after = asyncio.run(main())
+
+        assert counted(a) == [("shared host buffer", 8)]
+        assert counted(b) == [("shared host buffer", 16)]
+        assert a_after is b_after is after is default
+        assert child_saw is spawner
+        assert counted(spawner) == [("shared host buffer", 32)]
+        assert ConversionObserver.current is default
 
 
 class TestCounters:
@@ -455,7 +781,7 @@ class TestCounters:
                 TORCH.from_numpy(values, HOST)
 
         (row,) = counters.rows()
-        assert (row["count"], row["nbytes"], row["mechanism"]) == (3, 24, "host copy")
+        assert (row["count"], row["nbytes"], row["mechanism"]) == (3, 24, "shared host buffer")
 
     def test_merge_sums_counts_bytes_and_seconds(self):
         parent = self.counters(self.record(), self.record("cupy", nbytes=5))

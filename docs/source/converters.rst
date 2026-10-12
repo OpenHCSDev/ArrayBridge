@@ -45,9 +45,11 @@ answers about them.
 Routes
 ------
 
-A conversion tries, in order: a device move when source and target are the
-same library; a DLPack exchange when the target can wrap the source's buffer
-on its device; a copy through a NumPy array in main memory.
+A conversion tries, in order: nothing at all when source and target are the
+same library on the same device; a device move when they are the same library;
+a DLPack exchange when the target can wrap the source's buffer on its device;
+an exchange through NumPy in main memory, which shares the buffer where both
+libraries can (NumPy, torch, JAX) and copies otherwise.
 ``ConversionRoute.planned`` tells which is tried first for a pair, and a
 ``ConversionObserver`` receives what actually ran; both are described in
 :doc:`api_reference`. No pair is promised to be zero-copy.

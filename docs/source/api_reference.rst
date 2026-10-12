@@ -138,6 +138,10 @@ Conversion reporting
 
 ``ConversionRoute`` has one subclass per mechanism, tried in this order:
 
+``StaysInPlace`` (``"stays in place"``)
+  Same library and same device. The input is returned and no record is
+  written (``writes_a_record`` is ``False`` for this route only).
+
 ``DeviceMove`` (``"device move"``)
   Source and target are the same library; the array changes device only.
 
@@ -145,15 +149,24 @@ Conversion reporting
   The target wraps the source's buffer. Applies when the target imports
   DLPack from the source's device and the source exports from it.
 
+``SharedHostBuffer`` (``"shared host buffer"``)
+  Both arrays are in main memory and the result begins at the address of the
+  source: no bytes are copied. Applies when both libraries are
+  ``NumpyBufferSharing`` (NumPy, torch, JAX) and both devices are the host.
+  Whether one array is shared is known after the exchange; one that was
+  copied is recorded as ``"host copy"`` with ``"shared host buffer"`` under
+  ``declined_mechanisms``.
+
 ``HostCopy`` (``"host copy"``)
-  Download to a NumPy array, then upload to the target. Always applies.
+  The values are copied through a NumPy array. Always applies.
 
 ``ConversionRoute.planned(source_library, source_device, target_library,
 target_device)`` returns the route class that a conversion of that pair tries
 first. It reads only the library classes and the device values: no library is
 imported and no device is touched. The conversion selects its route with the
 same test. A route that applies but cannot carry a particular array is
-skipped and the next one is tried.
+skipped and the next one is tried, so the record of a conversion, not the
+plan, says what was done to that array.
 
 .. code-block:: python
 
@@ -166,19 +179,21 @@ skipped and the next one is tried.
 
    assert ConversionRoute.planned(torch, gpu, cupy, gpu).mechanism == "dlpack"
    assert ConversionRoute.planned(torch, HOST, cupy, gpu).mechanism == "host copy"
-   assert ConversionRoute.planned(numpy_library, HOST, torch, HOST).mechanism == "host copy"
+   assert ConversionRoute.planned(numpy_library, HOST, torch, HOST).mechanism == "shared host buffer"
+   assert ConversionRoute.planned(torch, gpu, torch, gpu).mechanism == "stays in place"
    assert ConversionRoute.planned(torch, HOST, torch, gpu).mechanism == "device move"
 
 ``ConversionObserver``
   Receives one ``ConversionRecord`` per conversion while it is installed.
   Subclass it and define ``record(record)``. ``observer.install()`` makes it
-  the process's observer and returns the one it replaced;
-  ``with observer.installed():`` does so for a block.
-  ``ConversionObserver.current`` is the installed observer. The default
+  the observer of the running thread or asyncio task and returns the one it
+  replaced; ``with observer.installed():`` does so for a block.
+  ``ConversionObserver.current`` is the observer of the context that reads
+  it (a ``contextvars.ContextVar``). A new thread starts with the default;
+  run it with ``contextvars.copy_context().run`` to give it yours. The default
   ignores conversions, and then nothing is timed. ``library.convert_to``
   (which ``convert_memory`` calls), ``library.to_numpy`` and
-  ``library.from_numpy`` report. A call that returns its input unchanged does
-  not.
+  ``library.from_numpy`` report. A conversion that stays in place does not.
 
 ``ConversionRecord``
   Fields: ``source_library``, ``source_device``, ``target_library``,

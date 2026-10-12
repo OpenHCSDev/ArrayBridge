@@ -176,6 +176,7 @@ class must define.
 | Parent | The library... | Abstract methods |
 |---|---|---|
 | `HostDevices` | keeps arrays in main memory. | `_wrap_host_array(data)`, `_move_to_host(data)` |
+| `NumpyBufferSharing` | is a `HostDevices` library whose main-memory array and a NumPy array can be one buffer (measure it before declaring it). | those of `HostDevices`, plus `_first_element_address(data)` |
 | `AcceleratorDevices` | can keep arrays on numbered accelerators. | `_accelerator_count()`, `_accelerator_scope(device)`, `_move_to_accelerator(data, device)`, `_upload(data, device)`, `_device_if_accepted(value)` |
 | `CudaLibrary` | is an `AcceleratorDevices` library with its own CUDA streams and a memory cache to release. | those of `AcceleratorDevices`, plus `create_stream()`, `stream_scope(stream)`, `current_device()`, `_free_cached_memory()` |
 | `DLPackImport` | can wrap another library's buffer through DLPack. | `_import_dlpack(payload)` |

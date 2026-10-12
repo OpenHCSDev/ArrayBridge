@@ -99,10 +99,13 @@ library does not have.
 
 ## Which route a conversion takes
 
-A conversion tries three mechanisms in order: `"device move"` (same library,
-other device), `"dlpack"` (the target wraps the source's buffer) and
-`"host copy"` (download to NumPy, then upload). `ConversionRoute.planned`
-tells which one will be tried first. It reads only the library classes and the
+A conversion tries five mechanisms in order: `"stays in place"` (same library
+and device: nothing is converted), `"device move"` (same library, other
+device), `"dlpack"` (the target wraps the source's buffer),
+`"shared host buffer"` (both arrays are in main memory and the result is the
+source's own buffer) and `"host copy"` (the values are copied through NumPy).
+`ConversionRoute.planned` tells which one will be tried first; the record of
+a conversion names the one that was used. It reads only the library classes and the
 device values, so it works without the libraries or the hardware:
 
 ```python
@@ -115,11 +118,12 @@ gpu = AcceleratorDevice(0)
 assert ConversionRoute.planned(torch, gpu, cupy, gpu).mechanism == "dlpack"
 assert ConversionRoute.planned(torch, HOST, cupy, gpu).mechanism == "host copy"
 assert ConversionRoute.planned(torch, HOST, torch, gpu).mechanism == "device move"
+assert ConversionRoute.planned(torch, gpu, torch, gpu).mechanism == "stays in place"
 ```
 
 To see what conversions actually ran, install a `ConversionCounters` observer.
 It keeps a count, bytes and seconds per source, target and mechanism. This
-example needs JAX:
+example needs TensorFlow:
 
 ```python
 import numpy as np
@@ -128,16 +132,18 @@ from arraybridge import HOST, ConversionCounters, convert_memory
 
 counters = ConversionCounters()
 with counters.installed():
-    convert_memory(np.zeros((4, 4), dtype=np.float32), "numpy", "jax", HOST)
+    convert_memory(np.zeros((4, 4), dtype=np.float32), "numpy", "tensorflow", HOST)
 
 row = counters.rows()[0]
-assert (row["source_library"], row["target_library"]) == ("numpy", "jax")
+assert (row["source_library"], row["target_library"]) == ("numpy", "tensorflow")
 assert (row["mechanism"], row["count"], row["nbytes"]) == ("host copy", 1, 64)
 print(counters.format_table())
 ```
 
-A call that returns its input unchanged is not counted. With no observer
-installed nothing is timed.
+A conversion that stays in place is not counted. With no observer installed
+nothing is timed. An observer belongs to the thread or asyncio task that
+installed it; a thread you start is observed when you run it in a copy of your
+context (`contextvars.copy_context().run`).
 
 ## Array operations in the array's own library
 
