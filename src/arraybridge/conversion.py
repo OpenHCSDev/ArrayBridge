@@ -149,7 +149,9 @@ class DLPackExchange(ConversionRoute):
 
     @classmethod
     def applies(cls, source, source_device, target, target_device) -> bool:
-        return target.imports_dlpack and source.exports_dlpack_from(source_device)
+        return target.imports_dlpack_from(source_device) and source.exports_dlpack_from(
+            source_device
+        )
 
     @classmethod
     def convert(cls, data, source, target, target_device):

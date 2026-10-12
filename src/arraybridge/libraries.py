@@ -460,6 +460,12 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
 
         return isinstance(self, DLPackImport)
 
+    def imports_dlpack_from(self, device: Device) -> bool:
+        """Whether this library can wrap a buffer that lives on ``device``."""
+
+        del device
+        return False
+
     def exports_dlpack_from(self, device: Device) -> bool:
         """Whether arrays of this library on ``device`` are offered through DLPack."""
 
@@ -885,6 +891,10 @@ class CudaLibrary(AcceleratorDevices[NativeT]):
 
 class DLPackImport(ArrayLibrary[NativeT]):
     """Libraries that can wrap another library's buffer handed over through DLPack."""
+
+    def imports_dlpack_from(self, device: Device) -> bool:
+        # A library without main-memory arrays cannot wrap a main-memory buffer.
+        return isinstance(self, HostDevices) or not isinstance(device, HostDevice)
 
     def from_dlpack(self, data: DLPackPayload | object) -> NativeT:
         """Wrap an exported buffer; ``NotImplemented`` when this capsule cannot be read."""
