@@ -120,3 +120,27 @@ cannot wrap one; the result (a host copy) is unchanged and the warning is gone.
 nominal type of an array of any supported library; `library.array_class` is an
 array of that library. Native array classes are registered with them when a
 library first meets one.
+
+`mypy` runs with `warn_return_any` and without `ignore_missing_imports`. Every
+library the package imports is declared in the repository's `stubs/`
+directory, which lists what arraybridge calls and comes before any installed
+copy, so the result is the same on every machine. A library class states that
+its `module` is that library; `NumpyArrayApi` names its module by the
+`NumpyFunctions` Protocol. For a class written outside the package this means:
+`NumpyArrayApi` and `MutableArrays` leave `array_module` abstract,
+`AcceleratorDevices` asks for `_device_if_accepted(value)`, `CudaLibrary` for
+`create_stream()`, and a `DLPackImport` library that cannot read a payload says
+so in `_reads_dlpack(payload)` instead of returning `NotImplemented` from
+`_import_dlpack`.
+
+Annotations that now say what was already returned: a device or stream scope
+is an `AbstractContextManager[object]` (CuPy's device and stream are their own
+context managers), `from_dlpack` returns the array or `NotImplementedType`,
+and `ArrayLibrary.array_module` is an `object` in the base class.
+
+A value of the wrong kind is now refused with `TypeError` in four places:
+`MemoryContractAttribute.read` when the stored value is neither a string nor
+`None`, `TorchLibrary.stream_scope` for an object that is neither a
+`torch.cuda.Stream` nor `None`, a dtype lookup in torch or TensorFlow whose
+attribute is not a dtype of that library, and `DeviceMove.convert` called with
+two different libraries.

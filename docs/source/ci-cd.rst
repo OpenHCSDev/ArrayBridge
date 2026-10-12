@@ -12,7 +12,7 @@ Before opening a change, run:
    python -m pytest
    ruff check src tests
    black --check src tests
-   mypy src --ignore-missing-imports
+   mypy src stubs
 
 Documentation changes should also build with warnings as errors:
 

@@ -250,7 +250,7 @@ ruff check src/ tests/ --fix
 
 ```bash
 # Run type checker
-mypy src/ --ignore-missing-imports
+mypy src stubs
 
 # Check specific file
 mypy src/arraybridge/converters.py
@@ -274,7 +274,7 @@ pytest
 pytest --cov=arraybridge --cov-report=term
 
 # 5. Type check (optional but recommended)
-mypy src/ --ignore-missing-imports
+mypy src stubs
 ```
 
 ## Submitting Changes
@@ -355,7 +355,7 @@ Add release notes to `CHANGELOG.md` (if exists) or create GitHub release notes.
 ```bash
 ruff check src tests scripts
 black --check src scripts
-mypy src --ignore-missing-imports
+mypy src stubs
 pytest
 python -m sphinx -E -W --keep-going -b html docs/source /tmp/arraybridge-docs
 git commit

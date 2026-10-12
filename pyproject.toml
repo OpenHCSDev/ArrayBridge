@@ -129,17 +129,18 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# The declarations in stubs/ carry the libraries' own names.
+"stubs/**" = ["N801", "N802"]
+
 [tool.mypy]
 python_version = "3.10"
 follow_imports_for_stubs = true
-ignore_missing_imports = true
-# Optional array libraries are not importable by the checker, so what their
-# modules return is untyped; those values are admitted by Array registration
-# at runtime (see arraybridge.libraries).
+ignore_missing_imports = false
+# The optional array libraries are read from the declarations in stubs/, which
+# list what arraybridge calls and come before any installed copy, so the result
+# does not depend on what is installed where mypy runs.
+mypy_path = "$MYPY_CONFIG_FILE_DIR/stubs"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false  # Too strict for scientific code
-
-[[tool.mypy.overrides]]
-module = "numpy.*"
-follow_imports = "skip"

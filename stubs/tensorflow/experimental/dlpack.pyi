@@ -1,0 +1,6 @@
+"""What arraybridge calls of ``tensorflow.experimental.dlpack``."""
+
+from tensorflow import Tensor
+
+def to_dlpack(tf_tensor: Tensor) -> object: ...
+def from_dlpack(dlcapsule: object) -> Tensor: ...

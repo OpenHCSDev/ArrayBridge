@@ -176,8 +176,8 @@ class must define.
 | Parent | The library... | Abstract methods |
 |---|---|---|
 | `HostDevices` | keeps arrays in main memory. | `_wrap_host_array(data)`, `_move_to_host(data)` |
-| `AcceleratorDevices` | can keep arrays on numbered accelerators. | `_accelerator_count()`, `_accelerator_scope(device)`, `_move_to_accelerator(data, device)`, `_upload(data, device)` |
-| `CudaLibrary` | is an `AcceleratorDevices` library with its own CUDA streams and a memory cache to release. | those of `AcceleratorDevices`, plus `stream_scope(stream)`, `current_device()`, `_free_cached_memory()` |
+| `AcceleratorDevices` | can keep arrays on numbered accelerators. | `_accelerator_count()`, `_accelerator_scope(device)`, `_move_to_accelerator(data, device)`, `_upload(data, device)`, `_device_if_accepted(value)` |
+| `CudaLibrary` | is an `AcceleratorDevices` library with its own CUDA streams and a memory cache to release. | those of `AcceleratorDevices`, plus `create_stream()`, `stream_scope(stream)`, `current_device()`, `_free_cached_memory()` |
 | `DLPackImport` | can wrap another library's buffer through DLPack. | `_import_dlpack(payload)` |
 | `DLPackProtocolExport` | has arrays with the standard DLPack export methods on every device. | none |
 | `NvidiaWheelLibraries` | loads CUDA from the `nvidia-*` wheels; child processes get their library directories on the search path. | none |
@@ -190,6 +190,9 @@ Methods with a default worth knowing:
   whole process. The default does nothing.
 - `cleanup_loaded(device=None)`: release cached device memory. `CudaLibrary`
   implements it; elsewhere the default does nothing.
+- `DLPackImport._reads_dlpack(payload)`: whether the importer can read this
+  payload. The default says yes; where it says no, `from_dlpack` returns
+  `NotImplemented` and `_import_dlpack` is not called.
 - `exports_dlpack_from`, `exports_dlpack_data`, `export_dlpack`: override
   these directly when export depends on the device or the array, as
   TensorFlow does.
@@ -208,14 +211,41 @@ declares.
 |---|---|---|---|
 | `InPlaceAssignment` | has arrays that take `array[index] = values`. | `assign` | none |
 | `ArrayMath` | can make arrays without a reference array, on its default device. A library that cannot (pyclesperanto) does not inherit it and has none of these four methods. | nothing | `linspace`, `ones`, `outer`, `floor` |
-| `NumpyArrayApi` | has an array module and arrays that follow the NumPy API (`array_module.max(data, axis=...)`, `data.astype(...)`, ...). It is an `ArrayMath` library. | every operation above except `assign`, and the four of `ArrayMath` | none |
-| `MutableArrays` | is a `NumpyArrayApi` and `InPlaceAssignment` library; supplies `_scale_dtype` and in-place plane normalisation. | all of the above | `_rescales_into(target_dtype)` |
+| `NumpyArrayApi` | has an array module and arrays that follow the NumPy API (`array_module.max(data, axis=...)`, `data.astype(...)`, ...). It is an `ArrayMath` library. | every operation above except `assign`, and the four of `ArrayMath` | `array_module` |
+| `MutableArrays` | is a `NumpyArrayApi` and `InPlaceAssignment` library; supplies `_scale_dtype` and in-place plane normalisation. | all of the above | `array_module`, `_rescales_into(target_dtype)` |
 
 Override an inherited operation only where the library's numeric rule
 differs (JAX's `mean` casts to float32 first).
 
 The six built-in classes at the end of `src/arraybridge/libraries.py` are the
 reference for each combination of roles.
+
+## Typing
+
+The checker reads a library from `stubs/<library>/`, never from an installed
+copy, so `mypy` gives the same result on every machine. For a new library:
+
+- declare in `stubs/<library>/` exactly the functions, classes and attributes
+  the class calls, with the library's own names and types;
+- state the module in the class, so its calls are checked against that
+  declaration:
+
+  ```python
+  if TYPE_CHECKING:
+      import mylib
+
+  class MylibLibrary(HostDevices["mylib.Array"]):
+      name = "mylib"
+
+      if TYPE_CHECKING:
+          module = mylib
+  ```
+
+- call `self.module.<function>(...)` directly: a local `module = self.module`
+  is a plain `ModuleType` to the checker and loses the declaration;
+- a `NumpyArrayApi` library returns its module of NumPy-named functions from
+  `array_module`; the checker compares that module with the `NumpyFunctions`
+  Protocol (`MutableNumpyFunctions` for `MutableArrays`).
 
 ## Tests to add
 
@@ -232,7 +262,7 @@ Run:
 ```bash
 ruff check src tests
 black --check src tests
-mypy src --ignore-missing-imports
+mypy src stubs
 pytest
 python -m sphinx -E -W --keep-going -b html docs/source /tmp/arraybridge-docs
 ```

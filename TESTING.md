@@ -9,7 +9,7 @@ are the authority for the current CI matrix.
 python -m pip install -e ".[dev,docs]"
 ruff check src tests
 black --check src tests
-mypy src --ignore-missing-imports
+mypy src stubs
 pytest
 python -m sphinx -E -W --keep-going -b html docs/source /tmp/arraybridge-docs
 ```

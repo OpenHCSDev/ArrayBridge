@@ -1,0 +1,41 @@
+"""What arraybridge calls of JAX."""
+
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+
+import numpy as _host_numpy
+from typing_extensions import Self
+
+from . import dlpack as dlpack
+from . import numpy as numpy
+
+class Device:
+    platform: str
+
+class _IndexUpdate:
+    def set(self, values: Array) -> Array: ...
+
+class _IndexUpdates:
+    def __getitem__(self, index: slice) -> _IndexUpdate: ...
+
+class Array:
+    shape: tuple[int, ...]
+    dtype: _host_numpy.dtype
+    at: _IndexUpdates
+    # A property in current JAX, a method in older releases.
+    device: Device | Callable[[], Device]
+    def astype(self, dtype: object, *, copy: bool = ...) -> Self: ...
+    def reshape(self, shape: tuple[int, ...]) -> Self: ...
+    def __sub__(self, other: Self | float) -> Self: ...
+    def __mul__(self, other: float) -> Self: ...
+    def __truediv__(self, other: Self | float) -> Self: ...
+    def __le__(self, other: Self) -> Self: ...
+
+class _Config:
+    def read(self, name: str) -> bool: ...
+
+config: _Config
+
+def devices(backend: str | None = ...) -> list[Device]: ...
+def default_device(new_val: Device) -> AbstractContextManager[None]: ...
+def device_put(x: _host_numpy.ndarray | Array, device: Device) -> Array: ...

@@ -18,10 +18,16 @@ each library's ``array_class`` is "an array of that library". Third-party
 array classes are admitted with ``ABC.register`` when the library first meets
 one, so no optional library is imported to define them. Inside a leaf the
 native class is the type parameter, named through a ``TYPE_CHECKING`` import
-because the optional package cannot be imported at runtime here; a checker
-without that package installed sees it as unknown. A library's module is a
-``types.ModuleType``: what it returns has no static type, so those values are
-checked by ``Array`` registration at runtime, not by the checker.
+because the optional package cannot be imported at runtime here.
+
+The checker reads each optional library from the declarations in the
+repository's ``stubs`` directory, which list what this module calls and take
+precedence over an installed copy, so the result of checking does not depend
+on what is installed. A leaf states that its ``module`` is that library, so
+its calls are checked against those declarations. A role shared by libraries
+with the same function names (``NumpyArrayApi``) names its module by a
+``Protocol`` of the functions it calls, and each leaf's module is checked
+against that Protocol.
 
 Importing this module imports no array library, NumPy included.
 """
@@ -43,8 +49,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
-from typing import TYPE_CHECKING, ClassVar, Generic, ParamSpec, TypeVar
+from types import ModuleType, NotImplementedType
+from typing import TYPE_CHECKING, ClassVar, Generic, ParamSpec, Protocol, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -54,13 +60,14 @@ from arraybridge.conversion import ConversionObserver, ConversionRecord, Convers
 from arraybridge.devices import HOST, AcceleratorDevice, Device, HostDevice, NamedDevice
 
 if TYPE_CHECKING:
-    # Optional packages: importable by a type checker that has them, never at runtime here.
+    # Optional packages, as declared in ``stubs``: never imported at runtime here.
     import cupy
     import jax
     import numpy as np
     import pyclesperanto
     import tensorflow
     import torch
+    from typing_extensions import Self
 
 logger = logging.getLogger(__name__)
 
@@ -80,14 +87,95 @@ _SCALING_RANGES: dict[str, float | tuple[float, float]] = {
 }
 
 
-def _numpy() -> ModuleType:
-    """NumPy, imported when an operation first needs it."""
-
-    return importlib.import_module("numpy")
-
-
 NativeT = TypeVar("NativeT")
 TargetT = TypeVar("TargetT")
+DTypeT = TypeVar("DTypeT")
+
+
+class Intensities(Protocol):
+    """The arithmetic that rescaling an array's intensities uses."""
+
+    def __sub__(self, other: Self | float, /) -> Self: ...
+
+    def __mul__(self, other: float, /) -> Self: ...
+
+    def __truediv__(self, other: Self | float, /) -> Self: ...
+
+
+IntensitiesT = TypeVar("IntensitiesT", bound=Intensities)
+
+
+class NumpyArray(Protocol):
+    """An array with NumPy's own methods, as ``NumpyArrayApi`` calls them."""
+
+    def astype(self, dtype: DType, /, *, copy: bool = ...) -> Self: ...
+
+    def reshape(self, shape: tuple[int, ...], /) -> Self: ...
+
+
+class MutableNumpyArray(NumpyArray, Intensities, Protocol):
+    """A NumPy-style array that ``MutableArrays`` rescales and divides in place."""
+
+    @property
+    def dtype(self) -> object: ...
+
+    def __getitem__(self, index: int, /) -> Self: ...
+
+    def __setitem__(self, index: int, value: Self, /) -> None: ...
+
+    def __itruediv__(self, other: Self | float, /) -> Self: ...
+
+    def __le__(self, other: Self, /) -> object: ...
+
+
+NumpyNativeT = TypeVar("NumpyNativeT", bound=NumpyArray)
+MutableNativeT = TypeVar("MutableNativeT", bound=MutableNumpyArray)
+
+
+class NumpyFunctions(Protocol[NumpyNativeT]):
+    """A module with NumPy's function names, as ``NumpyArrayApi`` calls them."""
+
+    @property
+    def ndarray(self) -> type: ...
+
+    def max(self, a: NumpyNativeT, /, *, axis: Axis | None = ...) -> NumpyNativeT: ...
+
+    def min(self, a: NumpyNativeT, /, *, axis: Axis | None = ...) -> NumpyNativeT: ...
+
+    def mean(self, a: NumpyNativeT, /, *, axis: Axis | None = ...) -> NumpyNativeT: ...
+
+    def sum(self, a: NumpyNativeT, /, *, axis: Axis | None = ...) -> NumpyNativeT: ...
+
+    def linspace(
+        self, start: float, stop: float, num: int, /, *, endpoint: bool = ...
+    ) -> NumpyNativeT: ...
+
+    def ones(self, shape: int | tuple[int, ...], /, *, dtype: DType = ...) -> NumpyNativeT: ...
+
+    def outer(self, a: NumpyNativeT, b: NumpyNativeT, /) -> NumpyNativeT: ...
+
+    def floor(self, x: float, /) -> NumpyNativeT: ...
+
+    def stack(self, arrays: Sequence[NumpyNativeT], /, *, axis: int = ...) -> NumpyNativeT: ...
+
+    def logical_and(self, x1: NumpyNativeT, x2: NumpyNativeT, /) -> NumpyNativeT: ...
+
+    def broadcast_to(self, array: NumpyNativeT, shape: tuple[int, ...], /) -> NumpyNativeT: ...
+
+
+class MutableNumpyFunctions(NumpyFunctions[MutableNativeT], Protocol[MutableNativeT]):
+    """The further NumPy function names that ``MutableArrays`` calls."""
+
+    @property
+    def floating(self) -> object: ...
+
+    def issubdtype(self, arg1: object, arg2: object, /) -> bool: ...
+
+    def array(
+        self, a: MutableNativeT, /, *, dtype: DType = ..., copy: bool = ...
+    ) -> MutableNativeT: ...
+
+    def clip(self, a: MutableNativeT, a_min: float, a_max: float, /) -> MutableNativeT: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +193,12 @@ def _dtype_name(dtype: DType) -> str:
     return str(getattr(dtype, "__name__", str(dtype).rsplit(".", maxsplit=1)[-1]))
 
 
-def _scaled_values(result, result_min, result_max, target_dtype: DType):
+def _scaled_values(
+    result: IntensitiesT,
+    result_min: IntensitiesT,
+    result_max: IntensitiesT,
+    target_dtype: DType,
+) -> IntensitiesT:
     normalized = (result - result_min) / (result_max - result_min)
     range_info = _SCALING_RANGES.get(_dtype_name(target_dtype))
     if range_info is None:
@@ -126,14 +219,21 @@ def _clamp_bounds(target_dtype: DType) -> tuple[float, float] | None:
     return 0, range_info
 
 
-def _mapped_dtype(target_dtype: DType, module: ModuleType):
+def _mapped_dtype(target_dtype: DType, module: object, dtype_class: type[DTypeT]) -> DTypeT:
+    """The ``dtype_class`` object that ``module`` keeps under the NumPy name of ``target_dtype``."""
+
+    import numpy as np
+
     try:
-        dtype_name = _numpy().dtype(target_dtype).name
+        dtype_name = np.dtype(target_dtype).name
     except TypeError as error:
         raise TypeError(f"Unsupported target dtype {target_dtype!r}") from error
-    mapped = getattr(module, dtype_name, None)
+    module_name = getattr(module, "__name__", module)
+    mapped: object = getattr(module, dtype_name, None)
     if mapped is None:
-        raise TypeError(f"{module.__name__} does not expose dtype {dtype_name}")
+        raise TypeError(f"{module_name} does not expose dtype {dtype_name}")
+    if not isinstance(mapped, dtype_class):
+        raise TypeError(f"{module_name}.{dtype_name} is not a {dtype_class.__name__}")
     return mapped
 
 
@@ -299,7 +399,7 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
         return self.loaded_module() or self.import_module()
 
     @property
-    def array_module(self) -> ModuleType:
+    def array_module(self) -> object:
         """The module holding the library's array functions."""
 
         return self.module
@@ -349,7 +449,7 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
                 f"available devices are {tuple(each.label for each in available)}"
             )
 
-    def device_scope(self, device: Device) -> AbstractContextManager[None]:
+    def device_scope(self, device: Device) -> AbstractContextManager[object]:
         """A block in which new arrays of this library are created on ``device``."""
 
         self.require_device(device)
@@ -370,7 +470,7 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
         with self._scope(device):
             return self._move(data, device)
 
-    def _array_scope(self, reference: NativeT) -> AbstractContextManager[None]:
+    def _array_scope(self, reference: NativeT) -> AbstractContextManager[object]:
         """The scope of the accelerator holding ``reference``; host data needs none."""
 
         device = self.device_of(reference)
@@ -380,7 +480,7 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
 
     # Each device parent answers for its own kind of device and passes the rest on.
 
-    def _scope(self, device: Device) -> AbstractContextManager[None]:
+    def _scope(self, device: Device) -> AbstractContextManager[object]:
         raise ValueError(f"{self.display_name} has no {device.label} device")
 
     def _activate(self, device: Device) -> None:
@@ -553,7 +653,8 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
     def nbytes_of(self, data: NativeT) -> int:
         """Size of the array's elements in bytes."""
 
-        np = _numpy()
+        import numpy as np
+
         return int(np.prod(tuple(getattr(data, "shape")), dtype=np.int64)) * int(
             np.dtype(getattr(data, "dtype")).itemsize
         )
@@ -591,7 +692,9 @@ class ArrayLibrary(Generic[NativeT], metaclass=AutoRegisterMeta):
     def dtype_name(self, dtype: DType) -> str:
         """The dtype's name as NumPy spells it (``"uint16"``, ``"float32"``)."""
 
-        return str(_numpy().dtype(dtype).name)
+        import numpy as np
+
+        return str(np.dtype(dtype).name)
 
     def astype(self, data: NativeT, dtype: DType) -> NativeT:
         with self._array_scope(data):
@@ -713,7 +816,7 @@ class HostDevices(ArrayLibrary[NativeT]):
     def host_devices(self) -> tuple[HostDevice, ...]:
         return (HOST,)
 
-    def _scope(self, device: Device) -> AbstractContextManager[None]:
+    def _scope(self, device: Device) -> AbstractContextManager[object]:
         if isinstance(device, HostDevice):
             return self._host_scope()
         return super()._scope(device)
@@ -732,7 +835,7 @@ class HostDevices(ArrayLibrary[NativeT]):
             return self._wrap_host_array(data)
         return super()._place(data, device)
 
-    def _host_scope(self) -> AbstractContextManager[None]:
+    def _host_scope(self) -> AbstractContextManager[object]:
         return nullcontext()
 
     @abstractmethod
@@ -752,7 +855,7 @@ class AcceleratorDevices(ArrayLibrary[NativeT]):
             return ()
         return tuple(AcceleratorDevice(index) for index in range(self._accelerator_count()))
 
-    def _scope(self, device: Device) -> AbstractContextManager[None]:
+    def _scope(self, device: Device) -> AbstractContextManager[object]:
         if isinstance(device, AcceleratorDevice):
             return self._accelerator_scope(device)
         return super()._scope(device)
@@ -778,7 +881,7 @@ class AcceleratorDevices(ArrayLibrary[NativeT]):
         """How many accelerators the imported library sees."""
 
     @abstractmethod
-    def _accelerator_scope(self, device: AcceleratorDevice) -> AbstractContextManager[None]:
+    def _accelerator_scope(self, device: AcceleratorDevice) -> AbstractContextManager[object]:
         """A block in which new arrays are created on ``device``."""
 
     def _activate_accelerator(self, device: AcceleratorDevice) -> None:
@@ -800,9 +903,14 @@ class AcceleratorDevices(ArrayLibrary[NativeT]):
         if self.loaded_module() is None:
             return None
         for value in arguments:
-            if self.accepts(value):
-                return self.device_of(value)
+            device = self._device_if_accepted(value)
+            if device is not None:
+                return device
         return None
+
+    @abstractmethod
+    def _device_if_accepted(self, value: object) -> Device | None:
+        """The device holding ``value``; ``None`` when it is not an array this library takes."""
 
     def _selected_accelerator(self) -> AcceleratorDevice | None:
         """The accelerator the library has selected for this thread, where it says."""
@@ -811,7 +919,7 @@ class AcceleratorDevices(ArrayLibrary[NativeT]):
 
     def _accelerator_call_scope(
         self, device: AcceleratorDevice | None
-    ) -> AbstractContextManager[None]:
+    ) -> AbstractContextManager[object]:
         """What a call running on ``device`` is wrapped in."""
 
         del device
@@ -855,13 +963,12 @@ class CudaLibrary(AcceleratorDevices[NativeT]):
 
     _thread_streams: ClassVar[threading.local] = threading.local()
 
+    @abstractmethod
     def create_stream(self) -> object:
         """A new CUDA stream on the current device."""
 
-        return self.module.cuda.Stream()
-
     @abstractmethod
-    def stream_scope(self, stream: object) -> AbstractContextManager[None]:
+    def stream_scope(self, stream: object) -> AbstractContextManager[object]:
         """A block whose work is queued on ``stream``."""
 
     @abstractmethod
@@ -898,7 +1005,7 @@ class CudaLibrary(AcceleratorDevices[NativeT]):
 
     def _accelerator_call_scope(
         self, device: AcceleratorDevice | None
-    ) -> AbstractContextManager[None]:
+    ) -> AbstractContextManager[object]:
         if device is None:
             return nullcontext()
         return self.stream_scope(self.thread_stream(device))
@@ -921,11 +1028,17 @@ class DLPackImport(ArrayLibrary[NativeT]):
         # A library without main-memory arrays cannot wrap a main-memory buffer.
         return isinstance(self, HostDevices) or not isinstance(device, HostDevice)
 
-    def from_dlpack(self, data: DLPackPayload | object) -> NativeT:
+    def from_dlpack(self, data: DLPackPayload | object) -> NativeT | NotImplementedType:
         """Wrap an exported buffer; ``NotImplemented`` when this capsule cannot be read."""
 
         payload = data if isinstance(data, DLPackPayload) else DLPackPayload(data, data)
-        return self._import_dlpack(payload)
+        return self._import_dlpack(payload) if self._reads_dlpack(payload) else NotImplemented
+
+    def _reads_dlpack(self, payload: DLPackPayload) -> bool:
+        """Whether the library's importer can read this payload."""
+
+        del payload
+        return True
 
     @abstractmethod
     def _import_dlpack(self, payload: DLPackPayload) -> NativeT:
@@ -1025,84 +1138,95 @@ class ArrayMath(ArrayLibrary[NativeT]):
         """Floor a host scalar in the library's default precision."""
 
 
-class NumpyArrayApi(ArrayMath[NativeT]):
+class NumpyArrayApi(ArrayMath[NumpyNativeT]):
     """Libraries whose array module and arrays follow the NumPy API (NumPy, CuPy, JAX)."""
+
+    @property
+    @abstractmethod
+    def array_module(self) -> NumpyFunctions[NumpyNativeT]:
+        """The library's module of NumPy-named functions."""
 
     def accepts(self, value: object) -> bool:
         return isinstance(value, self.array_module.ndarray)
 
-    def max(self, data: NativeT, axis: Axis) -> NativeT:
+    def max(self, data: NumpyNativeT, axis: Axis) -> NumpyNativeT:
         return self.array_module.max(data, axis=axis)
 
-    def min(self, data: NativeT, axis: Axis) -> NativeT:
+    def min(self, data: NumpyNativeT, axis: Axis) -> NumpyNativeT:
         return self.array_module.min(data, axis=axis)
 
-    def mean(self, data: NativeT, axis: Axis) -> NativeT:
+    def mean(self, data: NumpyNativeT, axis: Axis) -> NumpyNativeT:
         return self.array_module.mean(data, axis=axis)
 
-    def sum(self, data: NativeT, axis: Axis) -> NativeT:
+    def sum(self, data: NumpyNativeT, axis: Axis) -> NumpyNativeT:
         return self.array_module.sum(data, axis=axis)
 
-    def linspace(self, start: float, stop: float, num: int, *, endpoint: bool) -> NativeT:
+    def linspace(self, start: float, stop: float, num: int, *, endpoint: bool) -> NumpyNativeT:
         return self.array_module.linspace(start, stop, num, endpoint=endpoint)
 
-    def ones(self, shape: int | tuple[int, ...], dtype: DType) -> NativeT:
-        return self.array_module.ones(shape, dtype=_mapped_dtype(dtype, self.array_module))
+    def ones(self, shape: int | tuple[int, ...], dtype: DType) -> NumpyNativeT:
+        return self.array_module.ones(shape, dtype=_mapped_dtype(dtype, self.array_module, object))
 
-    def outer(self, left: NativeT, right: NativeT) -> NativeT:
+    def outer(self, left: NumpyNativeT, right: NumpyNativeT) -> NumpyNativeT:
         return self.array_module.outer(left, right)
 
-    def floor(self, value: float) -> NativeT:
+    def floor(self, value: float) -> NumpyNativeT:
         return self.array_module.floor(value)
 
-    def _stack(self, values: Sequence[NativeT]) -> NativeT:
+    def _stack(self, values: Sequence[NumpyNativeT]) -> NumpyNativeT:
         return self.array_module.stack(tuple(values), axis=0)
 
-    def _cast(self, data: NativeT, dtype: DType) -> NativeT:
-        return getattr(data, "astype")(dtype, copy=False)
+    def _cast(self, data: NumpyNativeT, dtype: DType) -> NumpyNativeT:
+        return data.astype(dtype, copy=False)
 
-    def _logical_and(self, left: NativeT, right: NativeT) -> NativeT:
+    def _logical_and(self, left: NumpyNativeT, right: NumpyNativeT) -> NumpyNativeT:
         return self.array_module.logical_and(left, right)
 
-    def _reshape(self, data: NativeT, shape: tuple[int, ...]) -> NativeT:
-        return getattr(data, "reshape")(shape)
+    def _reshape(self, data: NumpyNativeT, shape: tuple[int, ...]) -> NumpyNativeT:
+        return data.reshape(shape)
 
-    def _broadcast_to(self, data: NativeT, shape: tuple[int, ...]) -> NativeT:
+    def _broadcast_to(self, data: NumpyNativeT, shape: tuple[int, ...]) -> NumpyNativeT:
         return self.array_module.broadcast_to(data, shape)
 
-    def _ones_like(self, reference: NativeT, shape: tuple[int, ...], dtype: DType) -> NativeT:
+    def _ones_like(
+        self, reference: NumpyNativeT, shape: tuple[int, ...], dtype: DType
+    ) -> NumpyNativeT:
         del reference
         return self.array_module.ones(shape, dtype=dtype)
 
 
-class MutableArrays(NumpyArrayApi[NativeT], InPlaceAssignment[NativeT]):
+class MutableArrays(NumpyArrayApi[MutableNativeT], InPlaceAssignment[MutableNativeT]):
     """Libraries with the NumPy array API whose arrays can be changed in place."""
 
+    @property
+    @abstractmethod
+    def array_module(self) -> MutableNumpyFunctions[MutableNativeT]:
+        """The library's module of NumPy-named functions."""
+
     def _normalize_planes(
-        self, data: NativeT, dtype: DType, scales: Sequence[float | None]
-    ) -> NativeT:
-        np = _numpy()
+        self, data: MutableNativeT, dtype: DType, scales: Sequence[float | None]
+    ) -> MutableNativeT:
+        import numpy as np
+
         # Integer division promotes the output dtype, so only floats divide in place.
         if not np.issubdtype(np.dtype(dtype), np.inexact) or len(scales) == 0:
             return super()._normalize_planes(data, dtype, scales)
-        normalized = self.module.array(data, dtype=dtype, copy=True)
+        normalized = self.array_module.array(data, dtype=dtype, copy=True)
         for index, scale in enumerate(scales):
             if scale is not None:
                 normalized[index] /= float(scale)
         return normalized
 
-    def _scale_dtype(self, result: NativeT, target_dtype: DType) -> NativeT:
-        module = self.module
-        values = getattr(result, "astype")
+    def _scale_dtype(self, result: MutableNativeT, target_dtype: DType) -> MutableNativeT:
+        module = self.array_module
         if not (
-            module.issubdtype(getattr(result, "dtype"), module.floating)
-            and self._rescales_into(target_dtype)
+            module.issubdtype(result.dtype, module.floating) and self._rescales_into(target_dtype)
         ):
-            return values(target_dtype)
+            return result.astype(target_dtype)
         result_min = module.min(result)
         result_max = module.max(result)
         if result_max <= result_min:
-            return values(target_dtype)
+            return result.astype(target_dtype)
         scaled = _scaled_values(result, result_min, result_max, target_dtype)
         bounds = _clamp_bounds(target_dtype)
         if bounds is not None:
@@ -1124,12 +1248,19 @@ class NumpyLibrary(HostDevices["np.ndarray"], MutableArrays["np.ndarray"]):
     display_name = "NumPy"
     oom_messages = ("cannot allocate memory", "memory exhausted")
 
+    if TYPE_CHECKING:
+        module = np
+
+    @property
+    def array_module(self) -> MutableNumpyFunctions[np.ndarray]:
+        return self.module
+
     def device_of(self, data: np.ndarray) -> Device:
         del data
         return HOST
 
     def accepts(self, value: object) -> bool:
-        return isinstance(value, (_numpy().ndarray, ArrayPayload))
+        return isinstance(value, (self.module.ndarray, ArrayPayload))
 
     def _to_host(self, data: np.ndarray) -> np.ndarray:
         return data
@@ -1159,13 +1290,23 @@ class CupyLibrary(
         ("cuda", "runtime", "CUDARuntimeError"),
     )
 
+    if TYPE_CHECKING:
+        module = cupy
+
+    @property
+    def array_module(self) -> MutableNumpyFunctions[cupy.ndarray]:
+        return self.module
+
     def device_of(self, data: cupy.ndarray) -> Device:
         return AcceleratorDevice(int(data.device.id))
+
+    def _device_if_accepted(self, value: object) -> Device | None:
+        return self.device_of(value) if isinstance(value, self.module.ndarray) else None
 
     def _accelerator_count(self) -> int:
         return int(self.module.cuda.runtime.getDeviceCount())
 
-    def _accelerator_scope(self, device: AcceleratorDevice) -> AbstractContextManager[None]:
+    def _accelerator_scope(self, device: AcceleratorDevice) -> AbstractContextManager[object]:
         return self.module.cuda.Device(device.index)
 
     def _activate_accelerator(self, device: AcceleratorDevice) -> None:
@@ -1182,23 +1323,28 @@ class CupyLibrary(
     def current_device(self) -> AcceleratorDevice | None:
         return AcceleratorDevice(int(self.module.cuda.runtime.getDevice()))
 
-    def stream_scope(self, stream: object) -> AbstractContextManager[None]:
+    def create_stream(self) -> object:
+        return self.module.cuda.Stream()
+
+    def stream_scope(self, stream: object) -> AbstractContextManager[object]:
         if not isinstance(stream, AbstractContextManager):
             raise TypeError(f"{stream!r} is not a CuPy stream")
         # A CuPy stream is its own context manager.
         return stream
 
     def _free_cached_memory(self) -> None:
-        module = self.module
-        module.get_default_memory_pool().free_all_blocks()
-        module.get_default_pinned_memory_pool().free_all_blocks()
-        module.cuda.runtime.deviceSynchronize()
+        self.module.get_default_memory_pool().free_all_blocks()
+        self.module.get_default_pinned_memory_pool().free_all_blocks()
+        self.module.cuda.runtime.deviceSynchronize()
+
+    def _reads_dlpack(self, payload: DLPackPayload) -> bool:
+        # CuPy releases before ``from_dlpack`` took capsules read them with ``fromDlpack``.
+        return _has_dlpack_protocol(payload.source) or hasattr(self.module, "fromDlpack")
 
     def _import_dlpack(self, payload: DLPackPayload) -> cupy.ndarray:
         if _has_dlpack_protocol(payload.source):
             return self.module.from_dlpack(payload.source)
-        capsule_importer = getattr(self.module, "fromDlpack", None)
-        return NotImplemented if capsule_importer is None else capsule_importer(payload.capsule)
+        return self.module.fromDlpack(payload.capsule)
 
     def _to_host(self, data: cupy.ndarray) -> np.ndarray:
         return data.get()
@@ -1220,14 +1366,19 @@ class TorchLibrary(
     oom_messages = ("out of memory", "cuda_error_out_of_memory")
     oom_exception_paths = (("cuda", "OutOfMemoryError"),)
 
+    if TYPE_CHECKING:
+        module = torch
+
     def device_of(self, data: torch.Tensor) -> Device:
         return AcceleratorDevice(int(data.device.index)) if data.is_cuda else HOST
 
-    def _accelerator_count(self) -> int:
-        cuda = self.module.cuda
-        return int(cuda.device_count()) if cuda.is_available() else 0
+    def _device_if_accepted(self, value: object) -> Device | None:
+        return self.device_of(value) if isinstance(value, self.module.Tensor) else None
 
-    def _accelerator_scope(self, device: AcceleratorDevice) -> AbstractContextManager[None]:
+    def _accelerator_count(self) -> int:
+        return int(self.module.cuda.device_count()) if self.module.cuda.is_available() else 0
+
+    def _accelerator_scope(self, device: AcceleratorDevice) -> AbstractContextManager[object]:
         return self.module.cuda.device(device.index)
 
     def _activate_accelerator(self, device: AcceleratorDevice) -> None:
@@ -1240,8 +1391,10 @@ class TorchLibrary(
         return self._wrap_host_array(data).to(f"cuda:{device.index}")
 
     def _wrap_host_array(self, data: np.ndarray) -> torch.Tensor:
+        import numpy as np
+
         host_data = (
-            _numpy().ascontiguousarray(data)
+            np.ascontiguousarray(data)
             if any(stride < 0 for stride in getattr(data, "strides", ()))
             else data
         )
@@ -1251,10 +1404,18 @@ class TorchLibrary(
         return data.cpu()
 
     def current_device(self) -> AcceleratorDevice | None:
-        cuda = self.module.cuda
-        return AcceleratorDevice(int(cuda.current_device())) if cuda.is_available() else None
+        return (
+            AcceleratorDevice(int(self.module.cuda.current_device()))
+            if self.module.cuda.is_available()
+            else None
+        )
 
-    def stream_scope(self, stream: object) -> AbstractContextManager[None]:
+    def create_stream(self) -> object:
+        return self.module.cuda.Stream()
+
+    def stream_scope(self, stream: object) -> AbstractContextManager[object]:
+        if stream is not None and not isinstance(stream, self.module.cuda.Stream):
+            raise TypeError(f"{stream!r} is not a PyTorch stream")
         return self.module.cuda.stream(stream)
 
     def _free_cached_memory(self) -> None:
@@ -1289,13 +1450,12 @@ class TorchLibrary(
         return self.module.sum(data, dim=axis)
 
     def linspace(self, start: float, stop: float, num: int, *, endpoint: bool) -> torch.Tensor:
-        float32 = self.module.float32
         if endpoint:
-            return self.module.linspace(start, stop, num, dtype=float32)
-        return self.module.linspace(start, stop, num + 1, dtype=float32)[:-1]
+            return self.module.linspace(start, stop, num, dtype=self.module.float32)
+        return self.module.linspace(start, stop, num + 1, dtype=self.module.float32)[:-1]
 
     def ones(self, shape: int | tuple[int, ...], dtype: DType) -> torch.Tensor:
-        return self.module.ones(shape, dtype=_mapped_dtype(dtype, self.module))
+        return self.module.ones(shape, dtype=_mapped_dtype(dtype, self.module, self.module.dtype))
 
     def outer(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
         return self.module.outer(left, right)
@@ -1307,9 +1467,10 @@ class TorchLibrary(
         return data.cpu().numpy()
 
     def _scale_dtype(self, result: torch.Tensor, target_dtype: DType) -> torch.Tensor:
-        module, np = self.module, _numpy()
-        mapped = _mapped_dtype(target_dtype, module)
-        floats = (module.float16, module.float32, module.float64)
+        import numpy as np
+
+        mapped = _mapped_dtype(target_dtype, self.module, self.module.dtype)
+        floats = (self.module.float16, self.module.float32, self.module.float64)
         if not (result.dtype in floats and np.issubdtype(np.dtype(target_dtype), np.integer)):
             return result.to(mapped)
         result_min = result.min()
@@ -1319,15 +1480,18 @@ class TorchLibrary(
         scaled = _scaled_values(result, result_min, result_max, target_dtype)
         bounds = _clamp_bounds(target_dtype)
         if bounds is not None:
-            scaled = module.clamp(scaled, min=bounds[0], max=bounds[1])
+            scaled = self.module.clamp(scaled, min=bounds[0], max=bounds[1])
         return scaled.to(mapped)
 
     def _stack(self, values: Sequence[torch.Tensor]) -> torch.Tensor:
         return self.module.stack(tuple(values), dim=0)
 
     def _cast(self, data: torch.Tensor, dtype: DType) -> torch.Tensor:
-        module = self.module
-        native = dtype if isinstance(dtype, module.dtype) else _mapped_dtype(dtype, module)
+        native = (
+            dtype
+            if isinstance(dtype, self.module.dtype)
+            else _mapped_dtype(dtype, self.module, self.module.dtype)
+        )
         return data.to(dtype=native)
 
     def _logical_and(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
@@ -1342,8 +1506,11 @@ class TorchLibrary(
     def _ones_like(
         self, reference: torch.Tensor, shape: tuple[int, ...], dtype: DType
     ) -> torch.Tensor:
-        module = self.module
-        return module.ones(shape, dtype=_mapped_dtype(dtype, module), device=reference.device)
+        return self.module.ones(
+            shape,
+            dtype=_mapped_dtype(dtype, self.module, self.module.dtype),
+            device=reference.device,
+        )
 
 
 class TensorflowLibrary(
@@ -1358,19 +1525,25 @@ class TensorflowLibrary(
     oom_messages = ("out of memory", "resource_exhausted")
     oom_exception_paths = (("errors", "ResourceExhaustedError"),)
 
+    if TYPE_CHECKING:
+        module = tensorflow
+
     def device_of(self, data: tensorflow.Tensor) -> Device:
         device = data.device.lower()
         if "gpu" not in device:
             return HOST
         return AcceleratorDevice(int(device.rsplit(":", maxsplit=1)[-1]))
 
+    def _device_if_accepted(self, value: object) -> Device | None:
+        return self.device_of(value) if isinstance(value, self.module.Tensor) else None
+
     def _accelerator_count(self) -> int:
         return len(self.module.config.list_logical_devices("GPU"))
 
-    def _accelerator_scope(self, device: AcceleratorDevice) -> AbstractContextManager[None]:
+    def _accelerator_scope(self, device: AcceleratorDevice) -> AbstractContextManager[object]:
         return self.module.device(f"/device:GPU:{device.index}")
 
-    def _host_scope(self) -> AbstractContextManager[None]:
+    def _host_scope(self) -> AbstractContextManager[object]:
         return self.module.device("/device:CPU:0")
 
     def _move_to_accelerator(
@@ -1394,16 +1567,15 @@ class TensorflowLibrary(
         return isinstance(device, AcceleratorDevice)
 
     def exports_dlpack_data(self, data: tensorflow.Tensor) -> bool:
-        module = self.module
         try:
-            major, minor = map(int, module.__version__.split(".")[:2])
+            major, minor = map(int, self.module.__version__.split(".")[:2])
         except (AttributeError, TypeError, ValueError):
             return False
         if (major, minor) < (2, 12):
             return False
         if "gpu" not in str(getattr(data, "device", "")).lower():
             return False
-        dlpack = getattr(getattr(module, "experimental", None), "dlpack", None)
+        dlpack = getattr(getattr(self.module, "experimental", None), "dlpack", None)
         return callable(getattr(dlpack, "to_dlpack", None))
 
     def export_dlpack(self, data: tensorflow.Tensor) -> DLPackPayload | None:
@@ -1421,7 +1593,9 @@ class TensorflowLibrary(
         return isinstance(value, self.module.Tensor)
 
     def dtype_name(self, dtype: DType) -> str:
-        return str(_numpy().dtype(getattr(dtype, "as_numpy_dtype", dtype)).name)
+        import numpy as np
+
+        return str(np.dtype(getattr(dtype, "as_numpy_dtype", dtype)).name)
 
     def max(self, data: tensorflow.Tensor, axis: Axis) -> tensorflow.Tensor:
         return self.module.reduce_max(data, axis=axis)
@@ -1430,8 +1604,7 @@ class TensorflowLibrary(
         return self.module.reduce_min(data, axis=axis)
 
     def mean(self, data: tensorflow.Tensor, axis: Axis) -> tensorflow.Tensor:
-        module = self.module
-        return module.reduce_mean(module.cast(data, module.float32), axis=axis)
+        return self.module.reduce_mean(self.module.cast(data, self.module.float32), axis=axis)
 
     def sum(self, data: tensorflow.Tensor, axis: Axis) -> tensorflow.Tensor:
         return self.module.reduce_sum(data, axis=axis)
@@ -1442,14 +1615,17 @@ class TensorflowLibrary(
         return self.module.linspace(float(start), float(stop), num + 1)[:-1]
 
     def ones(self, shape: int | tuple[int, ...], dtype: DType) -> tensorflow.Tensor:
-        return self.module.ones(shape, dtype=_mapped_dtype(dtype, self.module))
+        return self.module.ones(
+            shape, dtype=_mapped_dtype(dtype, self.module, self.module.dtypes.DType)
+        )
 
     def assign(
         self, data: tensorflow.Tensor, index: slice, values: tensorflow.Tensor
     ) -> tensorflow.Tensor:
-        module = self.module
-        rows = module.range(*index.indices(int(data.shape[0])))
-        return module.tensor_scatter_nd_update(data, module.reshape(rows, [-1, 1]), values)
+        rows = self.module.range(*index.indices(int(data.shape[0])))
+        return self.module.tensor_scatter_nd_update(
+            data, self.module.reshape(rows, [-1, 1]), values
+        )
 
     def outer(self, left: tensorflow.Tensor, right: tensorflow.Tensor) -> tensorflow.Tensor:
         return self.module.tensordot(left, right, axes=0)
@@ -1461,25 +1637,29 @@ class TensorflowLibrary(
         return data.numpy()
 
     def _scale_dtype(self, result: tensorflow.Tensor, target_dtype: DType) -> tensorflow.Tensor:
-        module, np = self.module, _numpy()
-        mapped = _mapped_dtype(target_dtype, module)
-        floats = (module.float16, module.float32, module.float64)
+        import numpy as np
+
+        mapped = _mapped_dtype(target_dtype, self.module, self.module.dtypes.DType)
+        floats = (self.module.float16, self.module.float32, self.module.float64)
         if not (result.dtype in floats and np.issubdtype(np.dtype(target_dtype), np.integer)):
-            return module.cast(result, mapped)
-        result_min = module.reduce_min(result)
-        result_max = module.reduce_max(result)
+            return self.module.cast(result, mapped)
+        result_min = self.module.reduce_min(result)
+        result_max = self.module.reduce_max(result)
         if result_max <= result_min:
-            return module.cast(result, mapped)
+            return self.module.cast(result, mapped)
         scaled = _scaled_values(result, result_min, result_max, target_dtype)
         bounds = _clamp_bounds(target_dtype)
         if bounds is not None:
-            scaled = module.clip_by_value(scaled, *bounds)
-        return module.cast(scaled, mapped)
+            scaled = self.module.clip_by_value(scaled, *bounds)
+        return self.module.cast(scaled, mapped)
 
     def _cast(self, data: tensorflow.Tensor, dtype: DType) -> tensorflow.Tensor:
-        module = self.module
-        native = dtype if isinstance(dtype, module.dtypes.DType) else _mapped_dtype(dtype, module)
-        return module.cast(data, native)
+        native = (
+            dtype
+            if isinstance(dtype, self.module.dtypes.DType)
+            else _mapped_dtype(dtype, self.module, self.module.dtypes.DType)
+        )
+        return self.module.cast(data, native)
 
     def _stack(self, values: Sequence[tensorflow.Tensor]) -> tensorflow.Tensor:
         return self.module.stack(tuple(values), axis=0)
@@ -1496,9 +1676,10 @@ class TensorflowLibrary(
     def _ones_like(
         self, reference: tensorflow.Tensor, shape: tuple[int, ...], dtype: DType
     ) -> tensorflow.Tensor:
-        module = self.module
-        with module.device(reference.device):
-            return module.ones(shape, dtype=_mapped_dtype(dtype, module))
+        with self.module.device(reference.device):
+            return self.module.ones(
+                shape, dtype=_mapped_dtype(dtype, self.module, self.module.dtypes.DType)
+            )
 
 
 class JaxLibrary(
@@ -1514,11 +1695,14 @@ class JaxLibrary(
     import_environment = (("XLA_PYTHON_CLIENT_PREALLOCATE", "false"),)
     oom_messages = ("out of memory", "oom when allocating", "allocation failure")
 
+    if TYPE_CHECKING:
+        module = jax
+
     @property
-    def array_module(self) -> ModuleType:
+    def array_module(self) -> NumpyFunctions[jax.Array]:
         return self.module.numpy
 
-    def _platform_devices(self, platform: str) -> tuple[object, ...]:
+    def _platform_devices(self, platform: str) -> tuple[jax.Device, ...]:
         return tuple(device for device in self.module.devices() if device.platform == platform)
 
     def device_of(self, data: jax.Array) -> Device:
@@ -1535,13 +1719,16 @@ class JaxLibrary(
                 return AcceleratorDevice(index)
         return NamedDevice(str(device))
 
+    def _device_if_accepted(self, value: object) -> Device | None:
+        return self.device_of(value) if isinstance(value, self.module.Array) else None
+
     def _accelerator_count(self) -> int:
         return len(self._platform_devices("gpu"))
 
-    def _accelerator_scope(self, device: AcceleratorDevice) -> AbstractContextManager[None]:
+    def _accelerator_scope(self, device: AcceleratorDevice) -> AbstractContextManager[object]:
         return self.module.default_device(self._platform_devices("gpu")[device.index])
 
-    def _host_scope(self) -> AbstractContextManager[None]:
+    def _host_scope(self) -> AbstractContextManager[object]:
         return self.module.default_device(self.module.devices("cpu")[0])
 
     def _move_to_accelerator(self, data: jax.Array, device: AcceleratorDevice) -> jax.Array:
@@ -1556,9 +1743,10 @@ class JaxLibrary(
     def _wrap_host_array(self, data: np.ndarray) -> jax.Array:
         return self.module.device_put(data, self.module.devices("cpu")[0])
 
+    def _reads_dlpack(self, payload: DLPackPayload) -> bool:
+        return _has_dlpack_protocol(payload.source)
+
     def _import_dlpack(self, payload: DLPackPayload) -> jax.Array:
-        if not _has_dlpack_protocol(payload.source):
-            return NotImplemented
         return self.module.dlpack.from_dlpack(self._aligned(payload.source))
 
     @staticmethod
@@ -1582,42 +1770,43 @@ class JaxLibrary(
         return data
 
     def mean(self, data: jax.Array, axis: Axis) -> jax.Array:
-        jnp = self.module.numpy
-        return jnp.mean(data.astype(jnp.float32), axis=axis)
+        return self.module.numpy.mean(data.astype(self.module.numpy.float32), axis=axis)
 
     def assign(self, data: jax.Array, index: slice, values: jax.Array) -> jax.Array:
         return data.at[index].set(values)
 
     def _to_host(self, data: jax.Array) -> np.ndarray:
-        return _numpy().asarray(data)
+        import numpy as np
+
+        return np.asarray(data)
 
     def _scale_dtype(self, result: jax.Array, target_dtype: DType) -> jax.Array:
-        module, np = self.module, _numpy()
+        import numpy as np
+
         if np.dtype(target_dtype) == np.dtype(np.float64):
-            x64_enabled = getattr(module.config, "x64_enabled", None)
+            x64_enabled = getattr(self.module.config, "x64_enabled", None)
             if x64_enabled is None:
-                x64_enabled = module.config.read("jax_enable_x64")
+                x64_enabled = self.module.config.read("jax_enable_x64")
             if not x64_enabled:
                 raise ValueError(
                     "JAX float64 output requires x64 mode; set JAX_ENABLE_X64=true before import"
                 )
-        jnp = module.numpy
-        mapped = _mapped_dtype(target_dtype, jnp)
-        floats = (jnp.float16, jnp.float32, jnp.float64)
+        mapped = _mapped_dtype(target_dtype, self.module.numpy, object)
+        floats = (self.module.numpy.float16, self.module.numpy.float32, self.module.numpy.float64)
         if not (result.dtype in floats and np.issubdtype(np.dtype(target_dtype), np.integer)):
             return result.astype(mapped)
-        result_min = jnp.min(result)
-        result_max = jnp.max(result)
+        result_min = self.module.numpy.min(result)
+        result_max = self.module.numpy.max(result)
         if result_max <= result_min:
             return result.astype(mapped)
         scaled = _scaled_values(result, result_min, result_max, target_dtype)
         bounds = _clamp_bounds(target_dtype)
         if bounds is not None:
-            scaled = jnp.clip(scaled, *bounds)
+            scaled = self.module.numpy.clip(scaled, *bounds)
         return scaled.astype(mapped)
 
     def _cast(self, data: jax.Array, dtype: DType) -> jax.Array:
-        return data.astype(_mapped_dtype(dtype, self.module.numpy))
+        return data.astype(_mapped_dtype(dtype, self.module.numpy, object))
 
     def _ones_like(self, reference: jax.Array, shape: tuple[int, ...], dtype: DType) -> jax.Array:
         return self.module.numpy.ones(shape, dtype=dtype, device=reference.device)
@@ -1628,6 +1817,9 @@ class PyclesperantoLibrary(
 ):
     name = "pyclesperanto"
     oom_messages = ("cl_mem_object_allocation_failure", "cl_out_of_resources", "out of memory")
+
+    if TYPE_CHECKING:
+        module = pyclesperanto
 
     _native_dtype_names: ClassVar[frozenset[str]] = frozenset(
         {"float32", "int8", "int16", "int32", "uint8", "uint16", "uint32"}
@@ -1659,11 +1851,15 @@ class PyclesperantoLibrary(
         # An OpenCL device that is not a listed GPU, such as a CPU OpenCL device.
         return NamedDevice(name)
 
-    def device_of(self, data: pyclesperanto.Array) -> Device:
-        declared_device = getattr(data, "device", None)
+    def device_of(self, data: object) -> Device:
+        # A host array has no device of its own: a kernel pushes it to the selected one.
+        declared_device: object = getattr(data, "device", None)
         if declared_device is None:
             declared_device = self.module.get_device()
         return self._device_named(self._device_name(declared_device))
+
+    def _device_if_accepted(self, value: object) -> Device | None:
+        return self.device_of(value) if self.accepts(value) else None
 
     def _accelerator_count(self) -> int:
         return len(self._gpu_devices())
@@ -1686,9 +1882,8 @@ class PyclesperantoLibrary(
         self, data: pyclesperanto.Array, device: AcceleratorDevice
     ) -> pyclesperanto.Array:
         del device
-        module = self.module
-        result = module.create_like(data)
-        module.copy(data, result)
+        result = self.module.create_like(data)
+        self.module.copy(data, result)
         return result
 
     def _upload(self, data: np.ndarray, device: AcceleratorDevice) -> pyclesperanto.Array:
@@ -1731,56 +1926,56 @@ class PyclesperantoLibrary(
         return self.module.pull(data)
 
     def _scale_dtype(self, result: pyclesperanto.Array, target_dtype: DType) -> pyclesperanto.Array:
-        module, np = self.module, _numpy()
+        import numpy as np
+
         target_is_int = np.issubdtype(np.dtype(target_dtype), np.integer)
         if not (np.issubdtype(result.dtype, np.floating) and target_is_int):
-            return module.push(module.pull(result).astype(target_dtype))
-        result_min = float(module.minimum_of_all_pixels(result))
-        result_max = float(module.maximum_of_all_pixels(result))
+            return self.module.push(self.module.pull(result).astype(target_dtype))
+        result_min = float(self.module.minimum_of_all_pixels(result))
+        result_max = float(self.module.maximum_of_all_pixels(result))
         if result_max <= result_min:
-            return module.push(module.pull(result).astype(target_dtype))
-        normalized = module.subtract_image_from_scalar(result, scalar=result_min)
-        normalized = module.multiply_image_and_scalar(
+            return self.module.push(self.module.pull(result).astype(target_dtype))
+        normalized = self.module.subtract_image_from_scalar(result, scalar=result_min)
+        normalized = self.module.multiply_image_and_scalar(
             normalized,
             scalar=1.0 / (result_max - result_min),
         )
         range_info = _SCALING_RANGES.get(_dtype_name(target_dtype))
         if isinstance(range_info, tuple):
             scale, offset = range_info
-            scaled = module.multiply_image_and_scalar(normalized, scalar=scale)
-            scaled = module.subtract_image_from_scalar(scaled, scalar=offset)
+            scaled = self.module.multiply_image_and_scalar(normalized, scalar=scale)
+            scaled = self.module.subtract_image_from_scalar(scaled, scalar=offset)
         elif range_info is not None:
-            scaled = module.multiply_image_and_scalar(normalized, scalar=range_info)
+            scaled = self.module.multiply_image_and_scalar(normalized, scalar=range_info)
         else:
             scaled = normalized
-        host_values = module.pull(scaled)
+        host_values = self.module.pull(scaled)
         bounds = _clamp_bounds(target_dtype)
         if bounds is not None:
             host_values = np.clip(host_values, *bounds)
-        return module.push(host_values.astype(target_dtype))
+        return self.module.push(host_values.astype(target_dtype))
 
     def _stack(self, values: Sequence[pyclesperanto.Array]) -> pyclesperanto.Array:
-        module = self.module
         if not values:
             raise ValueError("Cannot stack an empty pyclesperanto sequence")
         if len(values) == 1:
             source = values[0]
-            result = module.create((1, *source.shape), dtype=source.dtype)
-            return module.copy_slice(source, result, 0)
+            result = self.module.create((1, *source.shape), dtype=source.dtype)
+            return self.module.copy_slice(source, result, 0)
         result = values[0]
         for value in values[1:]:
-            result = module.concatenate_along_z(result, value)
+            result = self.module.concatenate_along_z(result, value)
         return result
 
     def _cast(self, data: pyclesperanto.Array, dtype: DType) -> pyclesperanto.Array:
-        module = self.module
-        return module.push(module.pull(data).astype(dtype, copy=False))
+        return self.module.push(self.module.pull(data).astype(dtype, copy=False))
 
     def _logical_and(
         self, left: pyclesperanto.Array, right: pyclesperanto.Array
     ) -> pyclesperanto.Array:
-        module = self.module
-        return module.push(_numpy().logical_and(module.pull(left), module.pull(right)))
+        import numpy as np
+
+        return self.module.push(np.logical_and(self.module.pull(left), self.module.pull(right)))
 
     def _reshape(self, data: pyclesperanto.Array, shape: tuple[int, ...]) -> pyclesperanto.Array:
         if tuple(data.shape) == shape:
@@ -1799,13 +1994,14 @@ class PyclesperantoLibrary(
     def _ones_like(
         self, reference: pyclesperanto.Array, shape: tuple[int, ...], dtype: DType
     ) -> pyclesperanto.Array:
-        module = self.module
-        if _numpy().dtype(dtype).name not in self._native_dtype_names:
+        import numpy as np
+
+        if np.dtype(dtype).name not in self._native_dtype_names:
             raise NotImplementedError(f"pyclesperanto cannot allocate native dtype {dtype!r}")
         if not 1 <= len(shape) <= 3:
             raise NotImplementedError(
                 "pyclesperanto native allocation requires one to three dimensions"
             )
-        result = module.create(shape, dtype=dtype, device=reference.device)
-        module.set(result, scalar=1, device=reference.device)
+        result = self.module.create(shape, dtype=dtype, device=reference.device)
+        self.module.set(result, scalar=1, device=reference.device)
         return result

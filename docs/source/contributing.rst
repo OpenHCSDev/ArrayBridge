@@ -9,7 +9,7 @@ by the repository:
    python -m pip install -e ".[dev,docs]"
    ruff check src tests
    black --check src tests
-   mypy src --ignore-missing-imports
+   mypy src stubs
    python -m pytest
    python -m sphinx -E -W --keep-going -b html docs/source docs/source/_build/html
 
